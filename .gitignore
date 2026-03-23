@@ -25,6 +25,9 @@ yarn-error.log*
 *.pem
 *.pub
 
+# 构建目录
+build/
+
 # 测试覆盖率
 coverage/
 

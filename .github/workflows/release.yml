@@ -1,0 +1,110 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/**'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get version from manifest.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag $TAG does not exist"
+          fi
+
+      - name: Build extension
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          # 创建构建目录
+          mkdir -p build/totppass
+
+          # 复制必要文件
+          cp -r icons build/totppass/
+          cp manifest.json build/totppass/
+          cp background.js build/totppass/
+          cp popup.html build/totppass/
+          cp popup.css build/totppass/
+          cp popup.js build/totppass/
+          cp totp.js build/totppass/
+
+          # 打包为 zip
+          cd build
+          zip -r ../totppass-v${{ steps.version.outputs.version }}.zip totppass
+          cd ..
+
+          echo "Extension packaged successfully"
+          ls -la totppass-*.zip
+
+      - name: Create tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: TOTPPass v${{ steps.version.outputs.version }}
+          body: |
+            ## TOTPPass v${{ steps.version.outputs.version }}
+
+            ### 安装方式
+            1. 下载 `totppass-v${{ steps.version.outputs.version }}.zip`
+            2. 解压到任意目录
+            3. 打开 Chrome 浏览器，访问 `chrome://extensions/`
+            4. 开启右上角 **开发者模式**
+            5. 点击 **加载已解压的扩展程序**，选择解压后的目录
+
+            ### 更新日志
+            请查看 [commits](https://github.com/${{ github.repository }}/commits/v${{ steps.version.outputs.version }}) 了解详细变更。
+          files: |
+            totppass-v${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check_tag.outputs.exists }}" == "false" ]; then
+            echo "✅ Release v${{ steps.version.outputs.version }} created successfully!"
+          else
+            echo "ℹ️ Tag v${{ steps.version.outputs.version }} already exists, skipping release."
+          fi
