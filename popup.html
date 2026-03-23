@@ -44,6 +44,23 @@
               </svg>
               <span>导入备份</span>
             </button>
+            <div class="dropdown-divider"></div>
+            <button id="aboutBtn" class="dropdown-item">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <span>关于</span>
+            </button>
+            <div class="dropdown-divider"></div>
+            <button id="openManagerBtn" class="dropdown-item">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="9" y1="3" x2="9" y2="21"></line>
+              </svg>
+              <span>打开管理页面</span>
+            </button>
           </div>
         </div>
       </div>
@@ -51,7 +68,7 @@
 
     <!-- 主内容区 -->
     <main class="main-content">
-      <!-- 主页 - 所有密码列表 -->
+      <!-- 主页 -->
       <div id="homePage" class="page active">
         <!-- 搜索框 -->
         <div class="search-box">
@@ -59,7 +76,7 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="text" id="searchInput" placeholder="搜索站点或名称...">
+          <input type="text" id="searchInput" placeholder="搜索站点或名称..." autofocus>
         </div>
 
         <!-- 当前网站匹配提示 -->
@@ -77,22 +94,14 @@
           </div>
         </div>
 
-        <!-- 所有密码列表 -->
-        <div class="secrets-section">
+        <!-- 搜索结果区域 -->
+        <div id="searchResults" class="search-results hidden">
           <div class="section-header">
-            <span>全部密钥</span>
-            <span id="secretsCount" class="count-badge">0</span>
+            <span>搜索结果</span>
+            <span id="searchCount" class="count-badge">0</span>
           </div>
-          <div id="allSecretsList" class="secrets-list">
+          <div id="searchResultsList" class="secrets-list">
             <!-- 动态生成 -->
-          </div>
-          <div id="emptyList" class="empty-list hidden">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
-            <p>暂无保存的密钥</p>
-            <p class="hint">点击右上角 + 添加</p>
           </div>
           <div id="noSearchResult" class="empty-list hidden">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -101,6 +110,95 @@
             </svg>
             <p>未找到匹配结果</p>
           </div>
+        </div>
+
+        <!-- 默认状态（未搜索时显示） -->
+        <div id="defaultState" class="default-state">
+          <!-- 统计卡片 -->
+          <div class="stats-card">
+            <div class="stats-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <div class="stats-info">
+              <div class="stats-count" id="totalSecretsCount">0</div>
+              <div class="stats-label">个密钥</div>
+            </div>
+            <button id="quickAddBtn" class="stats-add-btn" title="添加密钥">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+          </div>
+
+          <!-- 快捷操作 -->
+          <div class="quick-actions">
+            <button id="quickScanBtn" class="quick-action-btn">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span>手动添加</span>
+            </button>
+            <button id="quickManagerBtn" class="quick-action-btn">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="9" y1="3" x2="9" y2="21"></line>
+              </svg>
+              <span>管理密钥</span>
+            </button>
+          </div>
+
+          <!-- 使用提示 -->
+          <div class="tips-card">
+            <div class="tip-item">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <span>输入关键词搜索验证码</span>
+            </div>
+            <div class="tip-item">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              <span>访问已保存站点时自动显示</span>
+            </div>
+            <div class="tip-item">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span>右键图片识别二维码添加</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 空状态（无密钥时显示） -->
+        <div id="emptyState" class="empty-state hidden">
+          <div class="empty-icon">
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <h3>还没有保存密钥</h3>
+          <p>右键图片识别二维码或点击添加</p>
+          <button id="emptyAddBtn" class="btn-primary" style="margin-top: 16px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            添加密钥
+          </button>
         </div>
       </div>
 
@@ -122,6 +220,15 @@
             <span id="secretError" class="error-text"></span>
           </div>
 
+          <!-- 验证码预览 -->
+          <div id="codePreview" class="code-preview hidden">
+            <div class="preview-label">验证码预览</div>
+            <div class="preview-content">
+              <span id="previewCode" class="preview-code">------</span>
+              <span id="previewTimer" class="preview-timer">--s</span>
+            </div>
+          </div>
+
           <div class="form-group">
             <label for="digitsInput">验证码长度</label>
             <select id="digitsInput">
@@ -132,8 +239,8 @@
 
           <div class="form-group">
             <label for="siteInput">目标站点</label>
-            <input type="text" id="siteInput" placeholder="例如: github.com" autocomplete="off">
-            <span class="hint-text">支持域名匹配，如 github.com</span>
+            <input type="text" id="siteInput" placeholder="例如: https://github.com" autocomplete="off">
+            <span class="hint-text">支持完整 URL 或域名匹配</span>
           </div>
 
           <div class="form-group">
@@ -230,6 +337,54 @@
   <!-- 隐藏的文件输入 -->
   <input type="file" id="fileInput" accept=".json" style="display: none;">
 
+  <!-- 关于对话框 -->
+  <div id="aboutModal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content about-modal">
+      <div class="about-header">
+        <div class="about-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2 class="about-title">TOTPPass</h2>
+        <p class="about-version" id="popupVersion">v0.0.1</p>
+      </div>
+      <div class="about-body">
+        <p class="about-desc">简洁、本地、安全的两步验证管理器</p>
+        <div class="about-info">
+          <div class="about-item">
+            <span class="about-label">作者</span>
+            <a href="https://github.com/cyber-mule" target="_blank" class="about-value">cyber-mule</a>
+          </div>
+          <div class="about-item">
+            <span class="about-label">主页</span>
+            <a href="https://github.com/cyber-mule/totppass" target="_blank" class="about-value">GitHub</a>
+          </div>
+          <div class="about-item">
+            <span class="about-label">协议</span>
+            <span class="about-value">MIT License</span>
+          </div>
+        </div>
+        <div class="about-signature">
+          <div class="signature-item">
+            <span class="signature-label">构建时间</span>
+            <span class="signature-value" id="popupBuildTime">开发模式</span>
+          </div>
+          <div class="signature-item">
+            <span class="signature-label">Commit</span>
+            <span class="signature-value signature-hash" id="popupCommitHash">dev</span>
+          </div>
+        </div>
+      </div>
+      <div class="about-footer">
+        <button id="closeAboutBtn" class="btn-primary">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="crypto.js"></script>
   <script src="totp.js"></script>
   <script src="popup.js"></script>
 </body>

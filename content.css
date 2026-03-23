@@ -1,0 +1,223 @@
+/**
+ * TOTPPass - Content Script Styles
+ * 浮动按钮和提示样式
+ */
+
+/* 输入框包装器 */
+.totppass-input-wrapper {
+  position: relative !important;
+  display: inline-block !important;
+}
+
+.totppass-input-wrapper > input {
+  width: 100% !important;
+}
+
+/* 浮动按钮 */
+.totppass-float-btn {
+  position: absolute !important;
+  right: 8px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 24px !important;
+  height: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #f1f5f9 !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  opacity: 0.6 !important;
+  transition: all 0.2s ease !important;
+  z-index: 9999 !important;
+  box-sizing: border-box !important;
+  padding: 3px !important;
+}
+
+.totppass-float-btn svg {
+  width: 14px !important;
+  height: 14px !important;
+  color: #64748b !important;
+}
+
+.totppass-float-btn:hover {
+  opacity: 1 !important;
+  background: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.totppass-float-btn:active {
+  transform: translateY(-50%) scale(0.95) !important;
+}
+
+/* 有密钥时的状态 */
+.totppass-float-btn.totppass-has-secret {
+  opacity: 1 !important;
+  background: #4f46e5 !important;
+  border-color: #4f46e5 !important;
+}
+
+.totppass-float-btn.totppass-has-secret svg {
+  color: #ffffff !important;
+}
+
+.totppass-float-btn.totppass-has-secret:hover {
+  background: #4338ca !important;
+  border-color: #4338ca !important;
+}
+
+/* 成功状态 */
+.totppass-float-btn.totppass-success {
+  background: #10b981 !important;
+  border-color: #10b981 !important;
+  animation: totppass-pulse 0.5s ease !important;
+}
+
+.totppass-float-btn.totppass-success svg {
+  color: #ffffff !important;
+}
+
+@keyframes totppass-pulse {
+  0% { transform: translateY(-50%) scale(1); }
+  50% { transform: translateY(-50%) scale(1.2); }
+  100% { transform: translateY(-50%) scale(1); }
+}
+
+/* Toast 提示 */
+.totppass-toast {
+  position: fixed !important;
+  bottom: 24px !important;
+  left: 50% !important;
+  transform: translateX(-50%) translateY(20px) !important;
+  padding: 10px 20px !important;
+  background: #1e293b !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+  z-index: 2147483647 !important;
+  opacity: 0 !important;
+  transition: all 0.3s ease !important;
+  pointer-events: none !important;
+}
+
+.totppass-toast.totppass-toast-show {
+  opacity: 1 !important;
+  transform: translateX(-50%) translateY(0) !important;
+}
+
+.totppass-toast.totppass-toast-success {
+  background: #10b981 !important;
+}
+
+.totppass-toast.totppass-toast-error {
+  background: #ef4444 !important;
+}
+
+/* 暗色模式适配 */
+@media (prefers-color-scheme: dark) {
+  .totppass-float-btn {
+    background: #334155 !important;
+    border-color: #475569 !important;
+  }
+
+  .totppass-float-btn svg {
+    color: #94a3b8 !important;
+  }
+
+  .totppass-float-btn:hover {
+    background: #475569 !important;
+    border-color: #64748b !important;
+  }
+
+  .totppass-float-btn.totppass-has-secret svg {
+    color: #ffffff !important;
+  }
+}
+
+/* 密钥选择器 */
+.totppass-selector {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
+  min-width: 200px !important;
+  max-width: 280px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  overflow: hidden !important;
+}
+
+.totppass-selector-header {
+  padding: 10px 14px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: #64748b !important;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+.totppass-selector-list {
+  max-height: 240px !important;
+  overflow-y: auto !important;
+}
+
+.totppass-selector-item {
+  padding: 12px 14px !important;
+  cursor: pointer !important;
+  transition: background 0.2s !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+}
+
+.totppass-selector-item:last-child {
+  border-bottom: none !important;
+}
+
+.totppass-selector-item:hover {
+  background: #f1f5f9 !important;
+}
+
+.totppass-selector-name {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: #1e293b !important;
+  margin-bottom: 2px !important;
+}
+
+.totppass-selector-site {
+  font-size: 12px !important;
+  color: #94a3b8 !important;
+}
+
+/* 暗色模式选择器 */
+@media (prefers-color-scheme: dark) {
+  .totppass-selector {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+  }
+
+  .totppass-selector-header {
+    background: #0f172a !important;
+    border-bottom-color: #334155 !important;
+    color: #94a3b8 !important;
+  }
+
+  .totppass-selector-item {
+    border-bottom-color: #334155 !important;
+  }
+
+  .totppass-selector-item:hover {
+    background: #334155 !important;
+  }
+
+  .totppass-selector-name {
+    color: #f1f5f9 !important;
+  }
+
+  .totppass-selector-site {
+    color: #64748b !important;
+  }
+}
