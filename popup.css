@@ -1105,3 +1105,95 @@ a.about-value:hover {
 .auth-hint a:hover {
   text-decoration: underline;
 }
+
+/* 密码验证对话框 */
+.password-verify-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.password-verify-modal .modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.password-verify-modal .modal-content {
+  position: relative;
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 300px;
+  text-align: center;
+}
+
+.password-verify-modal h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.password-verify-modal p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.password-verify-modal input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.password-verify-modal input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.password-verify-modal .error {
+  font-size: 12px;
+  color: var(--danger-color);
+  min-height: 16px;
+  margin-bottom: 12px;
+}
+
+.password-verify-modal .modal-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.password-verify-modal .modal-actions button {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+}
+
+.password-verify-modal .btn-secondary {
+  background: var(--bg-color);
+  color: var(--text-secondary);
+}
+
+.password-verify-modal .btn-primary {
+  background: var(--primary-color);
+  color: white;
+}

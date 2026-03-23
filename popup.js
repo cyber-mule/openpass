@@ -781,9 +781,13 @@ class TwoFAApp {
     });
 
     // 导入
-    importBtn.addEventListener('click', () => {
+    importBtn.addEventListener('click', async () => {
       document.getElementById('dropdownMenu').classList.add('hidden');
-      fileInput.click();
+
+      // 验证密码
+      await this.verifyPasswordForAction('导入', async () => {
+        fileInput.click();
+      });
     });
 
     // 文件选择
@@ -894,37 +898,121 @@ class TwoFAApp {
   }
 
   /**
+   * 验证密码（用于敏感操作）
+   */
+  async verifyPasswordForAction(actionName, callback) {
+    // 检查会话是否存在
+    let sessionKey = await sessionManager.getSessionKey();
+    if (sessionKey) {
+      // 会话存在，直接执行
+      await callback(sessionKey);
+      return;
+    }
+
+    // 会话不存在，显示密码验证对话框
+    this.showPasswordVerifyModal(actionName, callback);
+  }
+
+  /**
+   * 显示密码验证对话框
+   */
+  showPasswordVerifyModal(actionName, callback) {
+    const modal = document.createElement('div');
+    modal.className = 'password-verify-modal';
+    modal.innerHTML = `
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h3>验证主密码</h3>
+        <p>执行${actionName}需要验证主密码</p>
+        <form id="verifyForm">
+          <input type="password" id="verifyPassword" placeholder="输入主密码" autofocus>
+          <p class="error" id="verifyError"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="cancelVerify">取消</button>
+            <button type="submit" class="btn-primary">确认</button>
+          </div>
+        </form>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const form = modal.querySelector('#verifyForm');
+    const input = modal.querySelector('#verifyPassword');
+    const error = modal.querySelector('#verifyError');
+    const cancelBtn = modal.querySelector('#cancelVerify');
+    const overlay = modal.querySelector('.modal-overlay');
+
+    const closeModal = () => modal.remove();
+
+    cancelBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', closeModal);
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = input.value;
+      if (!password) return;
+
+      try {
+        const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
+        const isValid = await CryptoUtils.verifyMasterPassword(
+          password,
+          result.masterPasswordHash,
+          result.masterPasswordSalt
+        );
+
+        if (isValid) {
+          await sessionManager.createSession(password);
+          modal.remove();
+          await callback(password);
+        } else {
+          error.textContent = '主密码错误';
+          input.value = '';
+          input.focus();
+        }
+      } catch (err) {
+        error.textContent = '验证失败';
+      }
+    });
+
+    input.focus();
+  }
+
+  /**
    * 导出密钥
    */
-  exportSecrets() {
+  async exportSecrets() {
     if (this.secrets.length === 0) {
       this.showToast('没有可导出的密钥');
       return;
     }
 
-    const backupData = {
-      version: '1.0',
-      exportTime: new Date().toISOString(),
-      count: this.secrets.length,
-      secrets: this.secrets
-    };
+    // 验证密码
+    await this.verifyPasswordForAction('导出', async () => {
+      const backupData = {
+        version: '1.0',
+        exportTime: new Date().toISOString(),
+        count: this.secrets.length,
+        secrets: this.secrets
+      };
 
-    const json = JSON.stringify(backupData, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+      const json = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
 
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `totppass-backup-${timestamp}.json`;
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const filename = `totppass-backup-${timestamp}.json`;
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
 
-    this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+      this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+    });
   }
 
   /**
