@@ -1,0 +1,610 @@
+/**
+ * 2FA Authenticator - 弹窗逻辑
+ */
+
+class TwoFAApp {
+  constructor() {
+    this.secrets = [];
+    this.currentTab = null;
+    this.currentUrl = null;
+    this.timers = new Map(); // 存储每个密钥的计时器
+    this.codeData = new Map(); // 存储每个密钥的当前验证码
+
+    this.init();
+  }
+
+  async init() {
+    await this.loadSecrets();
+    await this.getCurrentTab();
+    this.bindEvents();
+    this.showPage('homePage');
+  }
+
+  /**
+   * 从 storage 加载密钥
+   */
+  async loadSecrets() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['secrets'], (result) => {
+        this.secrets = result.secrets || [];
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * 保存密钥到 storage
+   */
+  async saveSecrets() {
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ secrets: this.secrets }, resolve);
+    });
+  }
+
+  /**
+   * 获取当前标签页 URL
+   */
+  async getCurrentTab() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          this.currentTab = tabs[0];
+          this.currentUrl = tabs[0].url;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * 解析 URL 获取域名信息
+   */
+  parseUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      const hostname = urlObj.hostname;
+
+      const parts = hostname.split('.');
+      let mainDomain = hostname;
+      if (parts.length >= 2) {
+        const tldPatterns = ['co.uk', 'com.au', 'co.jp', 'com.cn'];
+        const lastTwo = parts.slice(-2).join('.');
+        if (tldPatterns.includes(lastTwo)) {
+          mainDomain = parts.slice(-3).join('.');
+        } else {
+          mainDomain = parts.slice(-2).join('.');
+        }
+      }
+
+      return {
+        fullUrl: url,
+        fullDomain: hostname,
+        mainDomain: mainDomain,
+        origin: urlObj.origin
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * 匹配密钥
+   */
+  matchSecrets(url) {
+    const urlInfo = this.parseUrl(url);
+    if (!urlInfo) return [];
+
+    const matches = [];
+
+    for (const secret of this.secrets) {
+      const site = secret.site.toLowerCase();
+      const fullUrl = urlInfo.fullUrl.toLowerCase();
+      const fullDomain = urlInfo.fullDomain.toLowerCase();
+      const mainDomain = urlInfo.mainDomain.toLowerCase();
+
+      let matchType = null;
+
+      if (fullUrl.includes(site) || site.includes(fullUrl)) {
+        matchType = 'fullUrl';
+      } else if (fullDomain === site || site === fullDomain) {
+        matchType = 'fullDomain';
+      } else if (mainDomain === site || site === mainDomain) {
+        matchType = 'mainDomain';
+      } else if (fullDomain.includes(site) || site.includes(fullDomain)) {
+        matchType = 'contains';
+      }
+
+      if (matchType) {
+        matches.push({
+          ...secret,
+          matchType,
+          priority: ['fullUrl', 'fullDomain', 'mainDomain', 'contains'].indexOf(matchType)
+        });
+      }
+    }
+
+    matches.sort((a, b) => a.priority - b.priority);
+    return matches;
+  }
+
+  /**
+   * 显示页面
+   */
+  showPage(pageId) {
+    document.querySelectorAll('.page').forEach(page => {
+      page.classList.toggle('active', page.id === pageId);
+    });
+
+    if (pageId === 'homePage') {
+      this.renderHomePage();
+    } else if (pageId === 'createPage') {
+      this.initCreateForm();
+    }
+  }
+
+  /**
+   * 渲染主页
+   */
+  async renderHomePage() {
+    // 清除所有计时器
+    this.clearAllTimers();
+
+    // 渲染当前网站匹配
+    await this.renderCurrentSiteMatch();
+
+    // 渲染所有密钥列表
+    this.renderAllSecrets();
+
+    // 更新计数
+    document.getElementById('secretsCount').textContent = this.secrets.length;
+  }
+
+  /**
+   * 清除所有计时器
+   */
+  clearAllTimers() {
+    this.timers.forEach(timer => clearInterval(timer));
+    this.timers.clear();
+  }
+
+  /**
+   * 渲染当前网站匹配
+   */
+  async renderCurrentSiteMatch() {
+    const container = document.getElementById('currentSiteMatch');
+    const codesContainer = document.getElementById('currentSiteCodes');
+
+    if (!this.currentUrl) {
+      container.classList.add('hidden');
+      return;
+    }
+
+    const matches = this.matchSecrets(this.currentUrl);
+
+    if (matches.length === 0) {
+      container.classList.add('hidden');
+      return;
+    }
+
+    container.classList.remove('hidden');
+    codesContainer.innerHTML = '';
+
+    for (const secret of matches) {
+      const card = await this.createSecretCard(secret, true);
+      codesContainer.appendChild(card);
+    }
+  }
+
+  /**
+   * 渲染所有密钥列表
+   */
+  renderAllSecrets(filter = '') {
+    const list = document.getElementById('allSecretsList');
+    const emptyList = document.getElementById('emptyList');
+    const noSearchResult = document.getElementById('noSearchResult');
+
+    // 过滤密钥
+    let filteredSecrets = this.secrets;
+    if (filter) {
+      const lowerFilter = filter.toLowerCase();
+      filteredSecrets = this.secrets.filter(s =>
+        (s.name && s.name.toLowerCase().includes(lowerFilter)) ||
+        s.site.toLowerCase().includes(lowerFilter)
+      );
+    }
+
+    // 清空列表
+    list.innerHTML = '';
+
+    // 显示/隐藏空状态
+    if (this.secrets.length === 0) {
+      emptyList.classList.remove('hidden');
+      noSearchResult.classList.add('hidden');
+      list.classList.add('hidden');
+      return;
+    }
+
+    if (filteredSecrets.length === 0) {
+      emptyList.classList.add('hidden');
+      noSearchResult.classList.remove('hidden');
+      list.classList.add('hidden');
+      return;
+    }
+
+    emptyList.classList.add('hidden');
+    noSearchResult.classList.add('hidden');
+    list.classList.remove('hidden');
+
+    // 渲染列表
+    filteredSecrets.forEach(async (secret) => {
+      const card = await this.createSecretCard(secret, false);
+      list.appendChild(card);
+    });
+  }
+
+  /**
+   * 创建密钥卡片
+   */
+  async createSecretCard(secret, isCurrentSite) {
+    const card = document.createElement('div');
+    card.className = 'secret-card';
+    card.dataset.id = secret.id;
+
+    const result = await TOTP.generate(secret.secret, secret.digits);
+    this.codeData.set(secret.id, result.code);
+
+    const formatClass = secret.digits === 8 ? 'format-8' : 'format-6';
+    const formattedCode = this.formatCode(result.code);
+
+    card.innerHTML = `
+      <div class="secret-card-header">
+        <div class="secret-card-info">
+          <div class="secret-card-name">${secret.name || secret.site}</div>
+          <div class="secret-card-site">${secret.site}</div>
+        </div>
+        <div class="secret-card-menu">
+          <button class="menu-btn edit" title="编辑">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </button>
+          <button class="menu-btn delete" title="删除">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="secret-card-code">
+        <span class="otp-display ${formatClass}" data-id="${secret.id}">${formattedCode}</span>
+        <span class="timer-mini" data-id="${secret.id}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span class="timer-text">${result.remainingSeconds}s</span>
+        </span>
+      </div>
+    `;
+
+    // 点击复制验证码
+    card.addEventListener('click', async (e) => {
+      // 如果点击的是菜单按钮，不触发复制
+      if (e.target.closest('.menu-btn')) return;
+
+      const code = this.codeData.get(secret.id);
+      if (code) {
+        await this.copyToClipboard(code);
+        this.showToast('验证码已复制', 'success');
+        card.classList.add('copied');
+        setTimeout(() => card.classList.remove('copied'), 1000);
+      }
+    });
+
+    // 编辑按钮
+    card.querySelector('.menu-btn.edit').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.showEditPage(secret);
+    });
+
+    // 删除按钮
+    card.querySelector('.menu-btn.delete').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm(`确定要删除 "${secret.name || secret.site}" 吗？`)) {
+        this.secrets = this.secrets.filter(s => s.id !== secret.id);
+        await this.saveSecrets();
+        this.showToast('密钥已删除');
+        this.renderHomePage();
+      }
+    });
+
+    // 启动计时器
+    this.startCardTimer(secret, card);
+
+    return card;
+  }
+
+  /**
+   * 格式化验证码显示
+   */
+  formatCode(code) {
+    if (code.length === 6) {
+      return code.slice(0, 3) + ' ' + code.slice(3);
+    } else if (code.length === 8) {
+      return code.slice(0, 4) + ' ' + code.slice(4);
+    }
+    return code;
+  }
+
+  /**
+   * 启动卡片计时器
+   */
+  startCardTimer(secret, card) {
+    const timerId = setInterval(async () => {
+      const result = await TOTP.generate(secret.secret, secret.digits);
+      this.codeData.set(secret.id, result.code);
+
+      const otpDisplay = card.querySelector('.otp-display');
+      const timerMini = card.querySelector('.timer-mini');
+      const timerText = timerMini.querySelector('.timer-text');
+
+      otpDisplay.textContent = this.formatCode(result.code);
+      timerText.textContent = `${result.remainingSeconds}s`;
+
+      // 更新计时器样式
+      timerMini.classList.remove('warning', 'danger');
+      if (result.remainingSeconds <= 5) {
+        timerMini.classList.add('danger');
+      } else if (result.remainingSeconds <= 10) {
+        timerMini.classList.add('warning');
+      }
+    }, 1000);
+
+    this.timers.set(secret.id, timerId);
+  }
+
+  /**
+   * 显示编辑页面
+   */
+  showEditPage(secret) {
+    document.querySelectorAll('.page').forEach(page => {
+      page.classList.remove('active');
+    });
+    document.getElementById('editPage').classList.add('active');
+
+    document.getElementById('editId').value = secret.id;
+    document.getElementById('editSecretInput').value = secret.secret;
+    document.getElementById('editDigitsInput').value = secret.digits;
+    document.getElementById('editSiteInput').value = secret.site;
+    document.getElementById('editNameInput').value = secret.name || '';
+    document.getElementById('editSecretError').textContent = '';
+  }
+
+  /**
+   * 初始化创建表单
+   */
+  initCreateForm() {
+    const siteInput = document.getElementById('siteInput');
+
+    if (this.currentUrl) {
+      const urlInfo = this.parseUrl(this.currentUrl);
+      if (urlInfo) {
+        siteInput.value = urlInfo.fullDomain;
+      }
+    }
+
+    document.getElementById('secretInput').value = '';
+    document.getElementById('nameInput').value = '';
+    document.getElementById('secretError').textContent = '';
+  }
+
+  /**
+   * 绑定事件
+   */
+  bindEvents() {
+    // 添加按钮
+    document.getElementById('addBtn').addEventListener('click', () => {
+      this.showPage('createPage');
+    });
+
+    // 返回按钮
+    document.getElementById('backBtn').addEventListener('click', () => {
+      this.showPage('homePage');
+    });
+
+    document.getElementById('editBackBtn').addEventListener('click', () => {
+      this.showPage('homePage');
+    });
+
+    // 搜索
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      this.renderAllSecrets(e.target.value.trim());
+    });
+
+    // 创建表单
+    document.getElementById('createForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.createSecret();
+    });
+
+    // 编辑表单
+    document.getElementById('editForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.updateSecret();
+    });
+
+    // 删除按钮
+    document.getElementById('deleteBtn').addEventListener('click', async () => {
+      const id = document.getElementById('editId').value;
+      const secret = this.secrets.find(s => s.id === id);
+      if (secret && confirm(`确定要删除 "${secret.name || secret.site}" 吗？`)) {
+        this.secrets = this.secrets.filter(s => s.id !== id);
+        await this.saveSecrets();
+        this.showToast('密钥已删除');
+        this.showPage('homePage');
+      }
+    });
+
+    // 密钥输入验证
+    document.getElementById('secretInput').addEventListener('input', (e) => {
+      const value = e.target.value.toUpperCase().replace(/[^A-Z2-7]/g, '');
+      e.target.value = value;
+
+      const error = document.getElementById('secretError');
+      if (value && !TOTP.isValidSecret(value)) {
+        error.textContent = '密钥格式无效（至少需要 16 个字符）';
+      } else {
+        error.textContent = '';
+      }
+    });
+
+    document.getElementById('editSecretInput').addEventListener('input', (e) => {
+      const value = e.target.value.toUpperCase().replace(/[^A-Z2-7]/g, '');
+      e.target.value = value;
+
+      const error = document.getElementById('editSecretError');
+      if (value && !TOTP.isValidSecret(value)) {
+        error.textContent = '密钥格式无效（至少需要 16 个字符）';
+      } else {
+        error.textContent = '';
+      }
+    });
+  }
+
+  /**
+   * 创建密钥
+   */
+  async createSecret() {
+    const secret = document.getElementById('secretInput').value.trim().toUpperCase();
+    const digits = parseInt(document.getElementById('digitsInput').value);
+    const site = document.getElementById('siteInput').value.trim().toLowerCase();
+    const name = document.getElementById('nameInput').value.trim();
+
+    if (!TOTP.isValidSecret(secret)) {
+      document.getElementById('secretError').textContent = '密钥格式无效（至少需要 16 个字符）';
+      return;
+    }
+
+    if (!site) {
+      this.showToast('请输入目标站点');
+      return;
+    }
+
+    const exists = this.secrets.some(s => s.site === site);
+    if (exists) {
+      this.showToast('该站点已存在密钥');
+      return;
+    }
+
+    const newSecret = {
+      id: Date.now().toString(),
+      secret,
+      digits,
+      site,
+      name,
+      createdAt: new Date().toISOString()
+    };
+
+    this.secrets.push(newSecret);
+    await this.saveSecrets();
+
+    this.showToast('密钥已保存', 'success');
+    this.showPage('homePage');
+  }
+
+  /**
+   * 更新密钥
+   */
+  async updateSecret() {
+    const id = document.getElementById('editId').value;
+    const secret = document.getElementById('editSecretInput').value.trim().toUpperCase();
+    const digits = parseInt(document.getElementById('editDigitsInput').value);
+    const site = document.getElementById('editSiteInput').value.trim().toLowerCase();
+    const name = document.getElementById('editNameInput').value.trim();
+
+    if (!TOTP.isValidSecret(secret)) {
+      document.getElementById('editSecretError').textContent = '密钥格式无效（至少需要 16 个字符）';
+      return;
+    }
+
+    if (!site) {
+      this.showToast('请输入目标站点');
+      return;
+    }
+
+    const index = this.secrets.findIndex(s => s.id === id);
+    if (index === -1) {
+      this.showToast('密钥不存在');
+      return;
+    }
+
+    // 检查是否与其他密钥冲突
+    const conflict = this.secrets.some(s => s.site === site && s.id !== id);
+    if (conflict) {
+      this.showToast('该站点已存在其他密钥');
+      return;
+    }
+
+    this.secrets[index] = {
+      ...this.secrets[index],
+      secret,
+      digits,
+      site,
+      name,
+      updatedAt: new Date().toISOString()
+    };
+
+    await this.saveSecrets();
+    this.showToast('密钥已更新', 'success');
+    this.showPage('homePage');
+  }
+
+  /**
+   * 复制到剪贴板
+   */
+  async copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return true;
+    }
+  }
+
+  /**
+   * 显示 Toast 提示
+   */
+  showToast(message, type = 'default') {
+    let toast = document.querySelector('.toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'toast';
+      document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.classList.remove('success');
+    if (type === 'success') {
+      toast.classList.add('success');
+    }
+
+    toast.classList.add('show');
+
+    setTimeout(() => {
+      toast.classList.remove('show');
+    }, 2000);
+  }
+}
+
+// 初始化应用
+document.addEventListener('DOMContentLoaded', () => {
+  new TwoFAApp();
+});
