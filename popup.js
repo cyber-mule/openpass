@@ -1,6 +1,6 @@
 /**
  * 2FA Authenticator - 弹窗逻辑
- * 支持主密码认证和加密存储
+ * 弹窗无需认证，直接使用
  */
 
 class TwoFAApp {
@@ -11,7 +11,6 @@ class TwoFAApp {
     this.timers = new Map();
     this.codeData = new Map();
     this.pendingImportData = null;
-    this.isAuthenticated = false;
 
     this.init();
   }
@@ -24,13 +23,7 @@ class TwoFAApp {
       return;
     }
 
-    // 检查会话
-    if (!await sessionManager.isAuthenticated()) {
-      this.showAuthForm();
-      return;
-    }
-
-    this.isAuthenticated = true;
+    // 弹窗无需认证，直接加载
     await this.loadSecrets();
     await this.getCurrentTab();
     this.loadVersionInfo();
@@ -77,71 +70,71 @@ class TwoFAApp {
   }
 
   /**
-   * 显示认证表单
+   * 获取会话密钥（弹窗使用，无需认证但需要会话）
    */
-  showAuthForm() {
-    document.body.innerHTML = `
-      <div class="auth-container">
-        <div class="auth-header">
-          <div class="auth-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
-          </div>
-          <h2>验证主密码</h2>
-        </div>
-        <form id="authForm" class="auth-form">
-          <input type="password" id="authPassword" placeholder="输入主密码" autofocus>
-          <p class="auth-error" id="authError"></p>
-          <button type="submit" class="btn-primary">解锁</button>
-        </form>
-        <p class="auth-hint">忘记密码？<a href="#" id="openManager">打开管理页面</a></p>
-      </div>
-    `;
+  async getSessionKey() {
+    // 尝试从会话获取
+    let key = await sessionManager.getSessionKey();
+    if (key) return key;
 
-    const form = document.getElementById('authForm');
-    const passwordInput = document.getElementById('authPassword');
-    const errorText = document.getElementById('authError');
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const password = passwordInput.value;
-      if (!password) return;
-
-      try {
-        const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
-        const isValid = await CryptoUtils.verifyMasterPassword(
-          password,
-          result.masterPasswordHash,
-          result.masterPasswordSalt
-        );
-
-        if (isValid) {
-          await sessionManager.createSession(password);
-          location.reload();
-        } else {
-          errorText.textContent = '主密码错误';
-          passwordInput.value = '';
-          passwordInput.focus();
-        }
-      } catch (error) {
-        errorText.textContent = '验证失败';
-      }
-    });
-
-    document.getElementById('openManager').addEventListener('click', (e) => {
-      e.preventDefault();
-      chrome.tabs.create({ url: 'auth.html?redirect=manager.html' });
-      window.close();
-    });
+    // 会话不存在，显示密码输入
+    return await this.promptPassword();
   }
 
   /**
-   * 获取会话密钥
+   * 提示输入密码
    */
-  async getSessionKey() {
-    return await sessionManager.getSessionKey();
+  promptPassword() {
+    return new Promise((resolve) => {
+      document.body.innerHTML = `
+        <div class="auth-container">
+          <div class="auth-header">
+            <div class="auth-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h2>验证主密码</h2>
+          </div>
+          <form id="authForm" class="auth-form">
+            <input type="password" id="authPassword" placeholder="输入主密码" autofocus>
+            <p class="auth-error" id="authError"></p>
+            <button type="submit" class="btn-primary">解锁</button>
+          </form>
+        </div>
+      `;
+
+      const form = document.getElementById('authForm');
+      const passwordInput = document.getElementById('authPassword');
+      const errorText = document.getElementById('authError');
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const password = passwordInput.value;
+        if (!password) return;
+
+        try {
+          const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
+          const isValid = await CryptoUtils.verifyMasterPassword(
+            password,
+            result.masterPasswordHash,
+            result.masterPasswordSalt
+          );
+
+          if (isValid) {
+            await sessionManager.createSession(password);
+            resolve(password);
+          } else {
+            errorText.textContent = '主密码错误';
+            passwordInput.value = '';
+            passwordInput.focus();
+          }
+        } catch (error) {
+          errorText.textContent = '验证失败';
+        }
+      });
+    });
   }
 
   /**
@@ -219,7 +212,7 @@ class TwoFAApp {
         // 优先使用加密存储
         if (result.encryptedSecrets) {
           try {
-            const sessionKey = this.getSessionKey();
+            const sessionKey = await this.getSessionKey();
             if (sessionKey) {
               const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
               this.secrets = JSON.parse(decrypted);
@@ -245,7 +238,7 @@ class TwoFAApp {
    * 保存密钥到 storage（加密）
    */
   async saveSecrets() {
-    const sessionKey = this.getSessionKey();
+    const sessionKey = await this.getSessionKey();
     if (!sessionKey) {
       throw new Error('会话已过期');
     }

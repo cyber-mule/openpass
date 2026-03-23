@@ -1,6 +1,6 @@
 /**
  * TOTPPass - Manager Page Logic
- * 支持主密码认证和加密存储
+ * 管理页面需要认证，页面失焦后锁定
  */
 
 class ManagerApp {
@@ -30,11 +30,31 @@ class ManagerApp {
 
     this.isAuthenticated = true;
 
+    // 监听页面可见性，失焦后锁定
+    this.setupVisibilityListener();
+
     await this.loadSecrets();
     this.loadVersionSignature();
     this.bindEvents();
     this.renderSecretsTable();
     this.startTimers();
+  }
+
+  /**
+   * 设置页面可见性监听
+   */
+  setupVisibilityListener() {
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'hidden') {
+        // 页面隐藏时清除会话，下次需要重新认证
+        await sessionManager.clearSession();
+      }
+    });
+
+    // 页面关闭时也清除会话
+    window.addEventListener('beforeunload', async () => {
+      await sessionManager.clearSession();
+    });
   }
 
   /**
@@ -93,7 +113,7 @@ class ManagerApp {
         // 优先使用加密存储
         if (result.encryptedSecrets) {
           try {
-            const sessionKey = this.getSessionKey();
+            const sessionKey = await this.getSessionKey();
             if (sessionKey) {
               const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
               this.secrets = JSON.parse(decrypted);
@@ -123,7 +143,7 @@ class ManagerApp {
    * 保存密钥（加密）
    */
   async saveSecrets() {
-    const sessionKey = this.getSessionKey();
+    const sessionKey = await this.getSessionKey();
     if (!sessionKey) {
       throw new Error('会话已过期');
     }
