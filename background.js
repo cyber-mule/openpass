@@ -145,14 +145,21 @@ function parseOTPAuthUrl(data) {
  * 存储待添加的密钥
  */
 async function storePendingSecret(secret, tab) {
-  // 如果有当前标签页，尝试获取完整 URL
+  // 获取当前页面的完整 URL
+  let pageUrl = '';
   if (tab && tab.url) {
     const urlInfo = parseUrl(tab.url);
-    if (urlInfo && !secret.site) {
-      // 保存完整 URL，用户可以自行修改
-      secret.site = urlInfo.fullUrl;
+    if (urlInfo) {
+      pageUrl = urlInfo.fullUrl;
     }
   }
+
+  // 优先级：二维码中的 issuer > 当前页面 URL
+  // 如果二维码中指定了 issuer，使用二维码的；否则使用当前页面 URL
+  if (!secret.site && pageUrl) {
+    secret.site = pageUrl;
+  }
+  // 如果二维码有 site（issuer），保持不变
 
   // 存储到临时位置
   await chrome.storage.local.set({ pendingSecret: secret });
