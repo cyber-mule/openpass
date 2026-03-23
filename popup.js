@@ -372,14 +372,14 @@ class TwoFAApp {
     // 清除所有计时器
     this.clearAllTimers();
 
+    // 清空搜索框
+    document.getElementById('searchInput').value = '';
+
     // 渲染当前网站匹配
     await this.renderCurrentSiteMatch();
 
-    // 渲染所有密钥列表
-    this.renderAllSecrets();
-
-    // 更新计数
-    document.getElementById('secretsCount').textContent = this.secrets.length;
+    // 更新主页状态（默认不展示所有密钥）
+    this.updateHomeState();
   }
 
   /**
@@ -419,50 +419,85 @@ class TwoFAApp {
   }
 
   /**
-   * 渲染所有密钥列表
+   * 更新主页状态
    */
-  renderAllSecrets(filter = '') {
-    const list = document.getElementById('allSecretsList');
-    const emptyList = document.getElementById('emptyList');
+  updateHomeState() {
+    const defaultState = document.getElementById('defaultState');
+    const emptyState = document.getElementById('emptyState');
+    const searchResults = document.getElementById('searchResults');
+    const totalSecretsCount = document.getElementById('totalSecretsCount');
+
+    // 更新统计数字
+    totalSecretsCount.textContent = this.secrets.length;
+
+    // 隐藏搜索结果
+    searchResults.classList.add('hidden');
+
+    // 根据密钥数量显示不同状态
+    if (this.secrets.length === 0) {
+      defaultState.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+    } else {
+      defaultState.classList.remove('hidden');
+      emptyState.classList.add('hidden');
+    }
+  }
+
+  /**
+   * 渲染搜索结果
+   */
+  renderSearchResults(filter) {
+    const searchResults = document.getElementById('searchResults');
+    const searchResultsList = document.getElementById('searchResultsList');
+    const searchCount = document.getElementById('searchCount');
     const noSearchResult = document.getElementById('noSearchResult');
+    const defaultState = document.getElementById('defaultState');
+
+    // 如果搜索框为空，隐藏搜索结果，显示默认状态
+    if (!filter) {
+      searchResults.classList.add('hidden');
+      defaultState.classList.remove('hidden');
+      return;
+    }
+
+    // 隐藏默认状态，显示搜索结果
+    defaultState.classList.add('hidden');
+    searchResults.classList.remove('hidden');
 
     // 过滤密钥
-    let filteredSecrets = this.secrets;
-    if (filter) {
-      const lowerFilter = filter.toLowerCase();
-      filteredSecrets = this.secrets.filter(s =>
-        (s.name && s.name.toLowerCase().includes(lowerFilter)) ||
-        s.site.toLowerCase().includes(lowerFilter)
-      );
-    }
+    const lowerFilter = filter.toLowerCase();
+    const filteredSecrets = this.secrets.filter(s =>
+      (s.name && s.name.toLowerCase().includes(lowerFilter)) ||
+      s.site.toLowerCase().includes(lowerFilter)
+    );
+
+    // 更新计数
+    searchCount.textContent = filteredSecrets.length;
 
     // 清空列表
-    list.innerHTML = '';
+    searchResultsList.innerHTML = '';
 
-    // 显示/隐藏空状态
-    if (this.secrets.length === 0) {
-      emptyList.classList.remove('hidden');
-      noSearchResult.classList.add('hidden');
-      list.classList.add('hidden');
-      return;
-    }
-
+    // 显示/隐藏无结果提示
     if (filteredSecrets.length === 0) {
-      emptyList.classList.add('hidden');
       noSearchResult.classList.remove('hidden');
-      list.classList.add('hidden');
-      return;
+      searchResultsList.classList.add('hidden');
+    } else {
+      noSearchResult.classList.add('hidden');
+      searchResultsList.classList.remove('hidden');
+
+      // 渲染列表
+      filteredSecrets.forEach(async (secret) => {
+        const card = await this.createSecretCard(secret, false);
+        searchResultsList.appendChild(card);
+      });
     }
+  }
 
-    emptyList.classList.add('hidden');
-    noSearchResult.classList.add('hidden');
-    list.classList.remove('hidden');
-
-    // 渲染列表
-    filteredSecrets.forEach(async (secret) => {
-      const card = await this.createSecretCard(secret, false);
-      list.appendChild(card);
-    });
+  /**
+   * 渲染所有密钥列表（保留兼容性）
+   */
+  renderAllSecrets(filter = '') {
+    this.renderSearchResults(filter);
   }
 
   /**
@@ -632,6 +667,16 @@ class TwoFAApp {
       this.showPage('createPage');
     });
 
+    // 快捷添加按钮
+    document.getElementById('quickAddBtn').addEventListener('click', () => {
+      this.showPage('createPage');
+    });
+
+    // 快捷管理按钮
+    document.getElementById('quickManagerBtn').addEventListener('click', () => {
+      chrome.tabs.create({ url: 'manager.html' });
+    });
+
     // 返回按钮
     document.getElementById('backBtn').addEventListener('click', () => {
       this.showPage('homePage');
@@ -643,7 +688,7 @@ class TwoFAApp {
 
     // 搜索
     document.getElementById('searchInput').addEventListener('input', (e) => {
-      this.renderAllSecrets(e.target.value.trim());
+      this.renderSearchResults(e.target.value.trim());
     });
 
     // 创建表单
