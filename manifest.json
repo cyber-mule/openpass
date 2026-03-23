@@ -3,10 +3,14 @@
   "name": "2FA Authenticator",
   "version": "0.0.1",
   "description": "本地存储网站的 2FA 密钥，生成验证码",
+  "author": "cyber-mule",
+  "homepage_url": "https://github.com/cyber-mule/totppass",
   "permissions": [
     "storage",
     "activeTab",
-    "tabs"
+    "tabs",
+    "contextMenus",
+    "notifications"
   ],
   "background": {
     "service_worker": "background.js"
@@ -23,5 +27,20 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "options_page": "manager.html"
 }

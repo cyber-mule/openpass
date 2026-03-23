@@ -1,5 +1,6 @@
 /**
  * 2FA Authenticator - 弹窗逻辑
+ * 弹窗默认不需要认证，只有导入/导出等敏感操作需要密码验证
  */
 
 class TwoFAApp {
@@ -7,22 +8,228 @@ class TwoFAApp {
     this.secrets = [];
     this.currentTab = null;
     this.currentUrl = null;
-    this.timers = new Map(); // 存储每个密钥的计时器
-    this.codeData = new Map(); // 存储每个密钥的当前验证码
-    this.pendingImportData = null; // 待导入的数据
+    this.timers = new Map();
+    this.codeData = new Map();
+    this.pendingImportData = null;
 
     this.init();
   }
 
   async init() {
+    // 检查是否已设置主密码
+    const setupComplete = await this.checkSetup();
+    if (!setupComplete) {
+      this.showSetupPrompt();
+      return;
+    }
+
+    // 弹窗无需认证，直接加载
     await this.loadSecrets();
     await this.getCurrentTab();
+    this.loadVersionInfo();
+    const hasPendingSecret = await this.checkPendingSecret();
     this.bindEvents();
-    this.showPage('homePage');
+    if (!hasPendingSecret) {
+      this.showPage('homePage');
+    }
   }
 
   /**
-   * 从 storage 加载密钥
+   * 检查是否已完成设置
+   */
+  async checkSetup() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['isSetupComplete'], (result) => {
+        resolve(result.isSetupComplete === true);
+      });
+    });
+  }
+
+  /**
+   * 显示设置提示
+   */
+  showSetupPrompt() {
+    document.body.innerHTML = `
+      <div class="setup-prompt">
+        <div class="setup-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2>欢迎使用 TOTPPass</h2>
+        <p>请先设置主密码以保护你的密钥</p>
+        <button id="goSetupBtn" class="btn-primary">设置主密码</button>
+      </div>
+    `;
+
+    document.getElementById('goSetupBtn').addEventListener('click', () => {
+      chrome.tabs.create({ url: 'setup.html' });
+      window.close();
+    });
+  }
+
+  /**
+   * 获取会话密钥（不阻塞，返回 null 表示无会话）
+   */
+  async getSessionKey() {
+    return await sessionManager.getSessionKey();
+  }
+
+  /**
+   * 确保会话存在（用于需要密码的操作）
+   */
+  async ensureSession() {
+    let key = await sessionManager.getSessionKey();
+    if (key) return key;
+
+    // 显示密码验证对话框
+    return await this.showPasswordDialog();
+  }
+
+  /**
+   * 显示密码验证对话框
+   */
+  showPasswordDialog() {
+    return new Promise((resolve) => {
+      const modal = document.createElement('div');
+      modal.className = 'password-dialog-overlay';
+      modal.innerHTML = `
+        <div class="password-dialog">
+          <h3>验证主密码</h3>
+          <form id="passwordDialogForm">
+            <input type="password" id="dialogPassword" placeholder="输入主密码" autofocus>
+            <p class="error" id="dialogError"></p>
+            <div class="dialog-actions">
+              <button type="button" class="btn-cancel" id="dialogCancel">取消</button>
+              <button type="submit" class="btn-confirm">确认</button>
+            </div>
+          </form>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      const form = modal.querySelector('#passwordDialogForm');
+      const input = modal.querySelector('#dialogPassword');
+      const error = modal.querySelector('#dialogError');
+      const cancelBtn = modal.querySelector('#dialogCancel');
+
+      const close = (value) => {
+        modal.remove();
+        resolve(value);
+      };
+
+      cancelBtn.addEventListener('click', () => close(null));
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) close(null);
+      });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const password = input.value;
+        if (!password) return;
+
+        try {
+          const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
+          const isValid = await CryptoUtils.verifyMasterPassword(
+            password,
+            result.masterPasswordHash,
+            result.masterPasswordSalt
+          );
+
+          if (isValid) {
+            await sessionManager.createSession(password);
+            close(password);
+          } else {
+            error.textContent = '主密码错误';
+            input.value = '';
+            input.focus();
+          }
+        } catch (err) {
+          error.textContent = '验证失败';
+        }
+      });
+
+      input.focus();
+    });
+  }
+
+  /**
+   * 加载版本信息
+   */
+  loadVersionInfo() {
+    const manifest = chrome.runtime.getManifest();
+
+    // 更新版本号（元素可能在关于页面中）
+    const versionEl = document.getElementById('popupVersion');
+    if (versionEl) {
+      versionEl.textContent = `v${manifest.version}`;
+    }
+
+    // 更新构建时间
+    const buildTimeEl = document.getElementById('popupBuildTime');
+    if (buildTimeEl) {
+      buildTimeEl.textContent = manifest.build_time || '开发模式';
+    }
+
+    // 更新 commit hash
+    const commitHash = manifest.commit_hash || 'dev';
+    const hashElement = document.getElementById('popupCommitHash');
+    if (hashElement) {
+      hashElement.textContent = commitHash.substring(0, 7);
+
+      // 点击复制完整 hash
+      if (commitHash !== 'dev') {
+        hashElement.title = '点击复制完整 hash';
+        hashElement.addEventListener('click', async () => {
+          await this.copyToClipboard(commitHash);
+          this.showToast('Commit hash 已复制', 'success');
+        });
+      }
+    }
+  }
+
+  /**
+   * 检查是否有待添加的密钥（来自右键菜单解析）
+   */
+  async checkPendingSecret() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['pendingSecret'], async (result) => {
+        if (result.pendingSecret) {
+          const secret = result.pendingSecret;
+          // 清除待添加的密钥
+          await chrome.storage.local.remove(['pendingSecret']);
+
+          // 显示添加页面并预填充
+          this.showPage('createPage');
+          setTimeout(() => {
+            this.prefillSecret(secret);
+          }, 100);
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      });
+    });
+  }
+
+  /**
+   * 预填充密钥表单
+   */
+  prefillSecret(secret) {
+    document.getElementById('secretInput').value = secret.secret || '';
+    document.getElementById('siteInput').value = secret.site || '';
+    document.getElementById('nameInput').value = secret.name || '';
+    document.getElementById('digitsInput').value = '6';
+
+    // 触发验证
+    const event = new Event('input');
+    document.getElementById('secretInput').dispatchEvent(event);
+  }
+
+  /**
+   * 从 storage 加载密钥（明文存储）
    */
   async loadSecrets() {
     return new Promise((resolve) => {
@@ -34,11 +241,17 @@ class TwoFAApp {
   }
 
   /**
-   * 保存密钥到 storage
+   * 保存密钥到 storage（明文存储）
    */
   async saveSecrets() {
+    // 同时保存站点列表（用于 badge 显示）
+    const sitesList = this.secrets.map(s => ({ site: s.site }));
+
     return new Promise((resolve) => {
-      chrome.storage.local.set({ secrets: this.secrets }, resolve);
+      chrome.storage.local.set({
+        secrets: this.secrets,
+        sitesList: sitesList
+      }, resolve);
     });
   }
 
@@ -78,10 +291,11 @@ class TwoFAApp {
       }
 
       return {
-        fullUrl: url,
-        fullDomain: hostname,
-        mainDomain: mainDomain,
-        origin: urlObj.origin
+        fullUrl: urlObj.href,           // 完整 URL
+        origin: urlObj.origin,          // 协议+域名+端口
+        pathname: urlObj.pathname,      // 路径
+        fullDomain: hostname,           // 完整域名
+        mainDomain: mainDomain          // 根域名
       };
     } catch (e) {
       return null;
@@ -89,41 +303,59 @@ class TwoFAApp {
   }
 
   /**
-   * 匹配密钥
+   * 匹配密钥（优先级：完整URL > 域名 > 根域名）
    */
   matchSecrets(url) {
     const urlInfo = this.parseUrl(url);
     if (!urlInfo) return [];
 
     const matches = [];
+    const fullUrlLower = urlInfo.fullUrl.toLowerCase();
+    const originLower = urlInfo.origin.toLowerCase();
+    const fullDomainLower = urlInfo.fullDomain.toLowerCase();
+    const mainDomainLower = urlInfo.mainDomain.toLowerCase();
 
     for (const secret of this.secrets) {
       const site = secret.site.toLowerCase();
-      const fullUrl = urlInfo.fullUrl.toLowerCase();
-      const fullDomain = urlInfo.fullDomain.toLowerCase();
-      const mainDomain = urlInfo.mainDomain.toLowerCase();
-
       let matchType = null;
+      let priority = 999;
 
-      if (fullUrl.includes(site) || site.includes(fullUrl)) {
+      // 1. 完整 URL 匹配（最高优先级）
+      if (fullUrlLower === site || fullUrlLower.startsWith(site)) {
         matchType = 'fullUrl';
-      } else if (fullDomain === site || site === fullDomain) {
+        priority = 1;
+      }
+      // 2. Origin 匹配
+      else if (originLower === site) {
+        matchType = 'origin';
+        priority = 2;
+      }
+      // 3. 完整域名匹配
+      else if (fullDomainLower === site) {
         matchType = 'fullDomain';
-      } else if (mainDomain === site || site === mainDomain) {
+        priority = 3;
+      }
+      // 4. 根域名匹配
+      else if (mainDomainLower === site) {
         matchType = 'mainDomain';
-      } else if (fullDomain.includes(site) || site.includes(fullDomain)) {
+        priority = 4;
+      }
+      // 5. 包含匹配（最低优先级）
+      else if (fullDomainLower.includes(site) || site.includes(fullDomainLower)) {
         matchType = 'contains';
+        priority = 5;
       }
 
       if (matchType) {
         matches.push({
           ...secret,
           matchType,
-          priority: ['fullUrl', 'fullDomain', 'mainDomain', 'contains'].indexOf(matchType)
+          priority
         });
       }
     }
 
+    // 按优先级排序
     matches.sort((a, b) => a.priority - b.priority);
     return matches;
   }
@@ -150,14 +382,14 @@ class TwoFAApp {
     // 清除所有计时器
     this.clearAllTimers();
 
+    // 清空搜索框
+    document.getElementById('searchInput').value = '';
+
     // 渲染当前网站匹配
     await this.renderCurrentSiteMatch();
 
-    // 渲染所有密钥列表
-    this.renderAllSecrets();
-
-    // 更新计数
-    document.getElementById('secretsCount').textContent = this.secrets.length;
+    // 更新主页状态（默认不展示所有密钥）
+    this.updateHomeState();
   }
 
   /**
@@ -197,50 +429,85 @@ class TwoFAApp {
   }
 
   /**
-   * 渲染所有密钥列表
+   * 更新主页状态
    */
-  renderAllSecrets(filter = '') {
-    const list = document.getElementById('allSecretsList');
-    const emptyList = document.getElementById('emptyList');
+  updateHomeState() {
+    const defaultState = document.getElementById('defaultState');
+    const emptyState = document.getElementById('emptyState');
+    const searchResults = document.getElementById('searchResults');
+    const totalSecretsCount = document.getElementById('totalSecretsCount');
+
+    // 更新统计数字
+    totalSecretsCount.textContent = this.secrets.length;
+
+    // 隐藏搜索结果
+    searchResults.classList.add('hidden');
+
+    // 根据密钥数量显示不同状态
+    if (this.secrets.length === 0) {
+      defaultState.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+    } else {
+      defaultState.classList.remove('hidden');
+      emptyState.classList.add('hidden');
+    }
+  }
+
+  /**
+   * 渲染搜索结果
+   */
+  renderSearchResults(filter) {
+    const searchResults = document.getElementById('searchResults');
+    const searchResultsList = document.getElementById('searchResultsList');
+    const searchCount = document.getElementById('searchCount');
     const noSearchResult = document.getElementById('noSearchResult');
+    const defaultState = document.getElementById('defaultState');
+
+    // 如果搜索框为空，隐藏搜索结果，显示默认状态
+    if (!filter) {
+      searchResults.classList.add('hidden');
+      defaultState.classList.remove('hidden');
+      return;
+    }
+
+    // 隐藏默认状态，显示搜索结果
+    defaultState.classList.add('hidden');
+    searchResults.classList.remove('hidden');
 
     // 过滤密钥
-    let filteredSecrets = this.secrets;
-    if (filter) {
-      const lowerFilter = filter.toLowerCase();
-      filteredSecrets = this.secrets.filter(s =>
-        (s.name && s.name.toLowerCase().includes(lowerFilter)) ||
-        s.site.toLowerCase().includes(lowerFilter)
-      );
-    }
+    const lowerFilter = filter.toLowerCase();
+    const filteredSecrets = this.secrets.filter(s =>
+      (s.name && s.name.toLowerCase().includes(lowerFilter)) ||
+      s.site.toLowerCase().includes(lowerFilter)
+    );
+
+    // 更新计数
+    searchCount.textContent = filteredSecrets.length;
 
     // 清空列表
-    list.innerHTML = '';
+    searchResultsList.innerHTML = '';
 
-    // 显示/隐藏空状态
-    if (this.secrets.length === 0) {
-      emptyList.classList.remove('hidden');
-      noSearchResult.classList.add('hidden');
-      list.classList.add('hidden');
-      return;
-    }
-
+    // 显示/隐藏无结果提示
     if (filteredSecrets.length === 0) {
-      emptyList.classList.add('hidden');
       noSearchResult.classList.remove('hidden');
-      list.classList.add('hidden');
-      return;
+      searchResultsList.classList.add('hidden');
+    } else {
+      noSearchResult.classList.add('hidden');
+      searchResultsList.classList.remove('hidden');
+
+      // 渲染列表
+      filteredSecrets.forEach(async (secret) => {
+        const card = await this.createSecretCard(secret, false);
+        searchResultsList.appendChild(card);
+      });
     }
+  }
 
-    emptyList.classList.add('hidden');
-    noSearchResult.classList.add('hidden');
-    list.classList.remove('hidden');
-
-    // 渲染列表
-    filteredSecrets.forEach(async (secret) => {
-      const card = await this.createSecretCard(secret, false);
-      list.appendChild(card);
-    });
+  /**
+   * 渲染所有密钥列表（保留兼容性）
+   */
+  renderAllSecrets(filter = '') {
+    this.renderSearchResults(filter);
   }
 
   /**
@@ -256,6 +523,8 @@ class TwoFAApp {
 
     const formatClass = secret.digits === 8 ? 'format-8' : 'format-6';
     const formattedCode = this.formatCode(result.code);
+    const remaining = result.remainingSeconds;
+    const progressPercent = (remaining / 30) * 100;
 
     card.innerHTML = `
       <div class="secret-card-header">
@@ -280,12 +549,9 @@ class TwoFAApp {
       </div>
       <div class="secret-card-code">
         <span class="otp-display ${formatClass}" data-id="${secret.id}">${formattedCode}</span>
-        <span class="timer-mini" data-id="${secret.id}">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          <span class="timer-text">${result.remainingSeconds}s</span>
+        <span class="timer-badge ${remaining <= 5 ? 'danger' : remaining <= 10 ? 'warning' : ''}" data-id="${secret.id}">
+          <span class="timer-progress" style="width: ${progressPercent}%"></span>
+          <span class="timer-text">${remaining}s</span>
         </span>
       </div>
     `;
@@ -348,18 +614,23 @@ class TwoFAApp {
       this.codeData.set(secret.id, result.code);
 
       const otpDisplay = card.querySelector('.otp-display');
-      const timerMini = card.querySelector('.timer-mini');
-      const timerText = timerMini.querySelector('.timer-text');
+      const timerBadge = card.querySelector('.timer-badge');
+      const timerText = timerBadge.querySelector('.timer-text');
+      const timerProgress = timerBadge.querySelector('.timer-progress');
+
+      const remaining = result.remainingSeconds;
+      const progressPercent = (remaining / 30) * 100;
 
       otpDisplay.textContent = this.formatCode(result.code);
-      timerText.textContent = `${result.remainingSeconds}s`;
+      timerText.textContent = `${remaining}s`;
+      timerProgress.style.width = `${progressPercent}%`;
 
       // 更新计时器样式
-      timerMini.classList.remove('warning', 'danger');
-      if (result.remainingSeconds <= 5) {
-        timerMini.classList.add('danger');
-      } else if (result.remainingSeconds <= 10) {
-        timerMini.classList.add('warning');
+      timerBadge.classList.remove('warning', 'danger');
+      if (remaining <= 5) {
+        timerBadge.classList.add('danger');
+      } else if (remaining <= 10) {
+        timerBadge.classList.add('warning');
       }
     }, 1000);
 
@@ -392,13 +663,77 @@ class TwoFAApp {
     if (this.currentUrl) {
       const urlInfo = this.parseUrl(this.currentUrl);
       if (urlInfo) {
-        siteInput.value = urlInfo.fullDomain;
+        // 保存完整 URL，用户可以自行修改
+        siteInput.value = urlInfo.fullUrl;
       }
     }
 
     document.getElementById('secretInput').value = '';
     document.getElementById('nameInput').value = '';
     document.getElementById('secretError').textContent = '';
+
+    // 隐藏验证码预览
+    document.getElementById('codePreview').classList.add('hidden');
+
+    // 清除预览计时器
+    if (this.previewTimer) {
+      clearInterval(this.previewTimer);
+      this.previewTimer = null;
+    }
+  }
+
+  /**
+   * 更新验证码预览
+   */
+  async updateCodePreview() {
+    const secretInput = document.getElementById('secretInput');
+    const digitsInput = document.getElementById('digitsInput');
+    const codePreview = document.getElementById('codePreview');
+    const previewCode = document.getElementById('previewCode');
+    const previewTimer = document.getElementById('previewTimer');
+
+    const secret = secretInput.value.trim().replace(/\s/g, '').toUpperCase();
+
+    if (!secret) {
+      codePreview.classList.add('hidden');
+      if (this.previewTimer) {
+        clearInterval(this.previewTimer);
+        this.previewTimer = null;
+      }
+      return;
+    }
+
+    try {
+      const digits = parseInt(digitsInput.value);
+      const result = await TOTP.generate(secret, digits);
+
+      // 显示预览
+      codePreview.classList.remove('hidden');
+      previewCode.textContent = this.formatCode(result.code);
+      previewTimer.textContent = `${result.remainingSeconds}s`;
+
+      // 启动计时器
+      if (this.previewTimer) {
+        clearInterval(this.previewTimer);
+      }
+
+      this.previewTimer = setInterval(async () => {
+        try {
+          const newResult = await TOTP.generate(secret, digits);
+          previewCode.textContent = this.formatCode(newResult.code);
+          previewTimer.textContent = `${newResult.remainingSeconds}s`;
+        } catch (e) {
+          // 忽略错误
+        }
+      }, 1000);
+
+    } catch (error) {
+      codePreview.classList.add('hidden');
+      if (this.previewTimer) {
+        clearInterval(this.previewTimer);
+        this.previewTimer = null;
+      }
+    }
   }
 
   /**
@@ -407,6 +742,26 @@ class TwoFAApp {
   bindEvents() {
     // 添加按钮
     document.getElementById('addBtn').addEventListener('click', () => {
+      this.showPage('createPage');
+    });
+
+    // 快捷添加按钮
+    document.getElementById('quickAddBtn').addEventListener('click', () => {
+      this.showPage('createPage');
+    });
+
+    // 快捷扫描按钮
+    document.getElementById('quickScanBtn').addEventListener('click', () => {
+      this.showPage('createPage');
+    });
+
+    // 快捷管理按钮
+    document.getElementById('quickManagerBtn').addEventListener('click', () => {
+      chrome.tabs.create({ url: 'manager.html' });
+    });
+
+    // 空状态添加按钮
+    document.getElementById('emptyAddBtn').addEventListener('click', () => {
       this.showPage('createPage');
     });
 
@@ -421,7 +776,17 @@ class TwoFAApp {
 
     // 搜索
     document.getElementById('searchInput').addEventListener('input', (e) => {
-      this.renderAllSecrets(e.target.value.trim());
+      this.renderSearchResults(e.target.value.trim());
+    });
+
+    // 密钥输入实时预览
+    document.getElementById('secretInput').addEventListener('input', () => {
+      this.updateCodePreview();
+    });
+
+    // 验证码长度变化
+    document.getElementById('digitsInput').addEventListener('change', () => {
+      this.updateCodePreview();
     });
 
     // 创建表单
@@ -521,9 +886,13 @@ class TwoFAApp {
     });
 
     // 导入
-    importBtn.addEventListener('click', () => {
+    importBtn.addEventListener('click', async () => {
       document.getElementById('dropdownMenu').classList.add('hidden');
-      fileInput.click();
+
+      // 验证密码
+      await this.verifyPasswordForAction('导入', async () => {
+        fileInput.click();
+      });
     });
 
     // 文件选择
@@ -589,6 +958,33 @@ class TwoFAApp {
       this.pendingImportData = null;
       restoreModal.classList.add('hidden');
     });
+
+    // 关于
+    const aboutBtn = document.getElementById('aboutBtn');
+    const aboutModal = document.getElementById('aboutModal');
+    const closeAboutBtn = document.getElementById('closeAboutBtn');
+    const aboutModalOverlay = aboutModal.querySelector('.modal-overlay');
+
+    aboutBtn.addEventListener('click', () => {
+      document.getElementById('dropdownMenu').classList.add('hidden');
+      aboutModal.classList.remove('hidden');
+    });
+
+    closeAboutBtn.addEventListener('click', () => {
+      aboutModal.classList.add('hidden');
+    });
+
+    aboutModalOverlay.addEventListener('click', () => {
+      aboutModal.classList.add('hidden');
+    });
+
+    // 打开管理页面
+    const openManagerBtn = document.getElementById('openManagerBtn');
+    openManagerBtn.addEventListener('click', () => {
+      document.getElementById('dropdownMenu').classList.add('hidden');
+      chrome.runtime.openOptionsPage();
+      window.close();
+    });
   }
 
   /**
@@ -607,37 +1003,51 @@ class TwoFAApp {
   }
 
   /**
+   * 验证密码（用于敏感操作）
+   */
+  async verifyPasswordForAction(actionName, callback) {
+    // 确保会话存在
+    const sessionKey = await this.ensureSession();
+    if (sessionKey) {
+      await callback(sessionKey);
+    }
+  }
+
+  /**
    * 导出密钥
    */
-  exportSecrets() {
+  async exportSecrets() {
     if (this.secrets.length === 0) {
       this.showToast('没有可导出的密钥');
       return;
     }
 
-    const backupData = {
-      version: '1.0',
-      exportTime: new Date().toISOString(),
-      count: this.secrets.length,
-      secrets: this.secrets
-    };
+    // 验证密码
+    await this.verifyPasswordForAction('导出', async () => {
+      const backupData = {
+        version: '1.0',
+        exportTime: new Date().toISOString(),
+        count: this.secrets.length,
+        secrets: this.secrets
+      };
 
-    const json = JSON.stringify(backupData, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+      const json = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
 
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `totppass-backup-${timestamp}.json`;
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const filename = `totppass-backup-${timestamp}.json`;
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
 
-    this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+      this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+    });
   }
 
   /**
@@ -710,12 +1120,7 @@ class TwoFAApp {
       return;
     }
 
-    const exists = this.secrets.some(s => s.site === site);
-    if (exists) {
-      this.showToast('该站点已存在密钥');
-      return;
-    }
-
+    // 允许同站点多个密钥
     const newSecret = {
       id: Date.now().toString(),
       secret,
@@ -758,13 +1163,7 @@ class TwoFAApp {
       return;
     }
 
-    // 检查是否与其他密钥冲突
-    const conflict = this.secrets.some(s => s.site === site && s.id !== id);
-    if (conflict) {
-      this.showToast('该站点已存在其他密钥');
-      return;
-    }
-
+    // 允许同站点多个密钥，直接更新
     this.secrets[index] = {
       ...this.secrets[index],
       secret,
