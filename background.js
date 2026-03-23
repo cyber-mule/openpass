@@ -30,8 +30,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     try {
       const secret = await parseQRFromImageUrl(info.srcUrl);
       if (secret) {
+        // 存储待添加的密钥
         await storePendingSecret(secret, tab);
-        showNotification('识别成功', '点击扩展图标确认添加');
+        // 直接打开弹窗
+        chrome.action.openPopup();
       } else {
         showNotification('识别失败', '未能识别有效的 TOTP 密钥');
       }

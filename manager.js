@@ -105,58 +105,27 @@ class ManagerApp {
   }
 
   /**
-   * 加载密钥（解密）
+   * 加载密钥（明文存储）
    */
   async loadSecrets() {
-    return new Promise(async (resolve) => {
-      chrome.storage.local.get(['encryptedSecrets', 'secrets'], async (result) => {
-        // 优先使用加密存储
-        if (result.encryptedSecrets) {
-          try {
-            const sessionKey = await this.getSessionKey();
-            if (sessionKey) {
-              const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
-              this.secrets = JSON.parse(decrypted);
-            } else {
-              this.secrets = [];
-            }
-          } catch (error) {
-            console.error('解密失败:', error);
-            this.secrets = [];
-          }
-        } else if (result.secrets) {
-          // 兼容旧版本：迁移明文数据
-          this.secrets = result.secrets;
-          // 加密存储
-          await this.saveSecrets();
-          // 删除明文数据
-          await chrome.storage.local.remove(['secrets']);
-        } else {
-          this.secrets = [];
-        }
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['secrets'], (result) => {
+        this.secrets = result.secrets || [];
         resolve();
       });
     });
   }
 
   /**
-   * 保存密钥（加密）
+   * 保存密钥（明文存储）
    */
   async saveSecrets() {
-    const sessionKey = await this.getSessionKey();
-    if (!sessionKey) {
-      throw new Error('会话已过期');
-    }
-
-    const json = JSON.stringify(this.secrets);
-    const encrypted = await CryptoUtils.encrypt(json, sessionKey);
-
-    // 同时保存明文站点列表（用于 badge 显示）
+    // 同时保存站点列表（用于 badge 显示）
     const sitesList = this.secrets.map(s => ({ site: s.site }));
 
     return new Promise((resolve) => {
       chrome.storage.local.set({
-        encryptedSecrets: encrypted,
+        secrets: this.secrets,
         sitesList: sitesList
       }, resolve);
     });
@@ -267,6 +236,44 @@ class ManagerApp {
     document.querySelector('#importModal .modal-overlay').addEventListener('click', () => {
       this.pendingImportData = null;
       document.getElementById('importModal').classList.add('hidden');
+    });
+
+    // 修改主密码
+    document.getElementById('changePasswordBtn').addEventListener('click', () => {
+      this.showPasswordModal();
+    });
+
+    document.getElementById('closePasswordModalBtn').addEventListener('click', () => {
+      this.hidePasswordModal();
+    });
+
+    document.getElementById('cancelPasswordBtn').addEventListener('click', () => {
+      this.hidePasswordModal();
+    });
+
+    document.querySelector('#passwordModal .modal-overlay').addEventListener('click', () => {
+      this.hidePasswordModal();
+    });
+
+    document.getElementById('passwordForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.changePassword();
+    });
+
+    // 密码强度检测
+    document.getElementById('newPassword').addEventListener('input', (e) => {
+      this.checkPasswordStrength(e.target.value);
+    });
+
+    document.getElementById('confirmNewPassword').addEventListener('input', () => {
+      const newPwd = document.getElementById('newPassword').value;
+      const confirmPwd = document.getElementById('confirmNewPassword').value;
+      const error = document.getElementById('passwordError');
+      if (confirmPwd && confirmPwd !== newPwd) {
+        error.textContent = '两次输入的密码不一致';
+      } else {
+        error.textContent = '';
+      }
     });
   }
 
@@ -681,6 +688,102 @@ class ManagerApp {
     setTimeout(() => {
       toast.classList.remove('show');
     }, 3000);
+  }
+
+  /**
+   * 显示修改主密码模态框
+   */
+  showPasswordModal() {
+    document.getElementById('passwordForm').reset();
+    document.getElementById('strengthFill').className = 'strength-fill';
+    document.getElementById('strengthText').textContent = '';
+    document.getElementById('passwordError').textContent = '';
+    document.getElementById('passwordModal').classList.remove('hidden');
+    document.getElementById('currentPassword').focus();
+  }
+
+  /**
+   * 隐藏修改主密码模态框
+   */
+  hidePasswordModal() {
+    document.getElementById('passwordModal').classList.add('hidden');
+  }
+
+  /**
+   * 检查密码强度
+   */
+  checkPasswordStrength(password) {
+    let score = 0;
+    if (password.length >= 8) score++;
+    if (password.length >= 12) score++;
+    if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+    if (/\d/.test(password)) score++;
+    if (/[^a-zA-Z0-9]/.test(password)) score++;
+
+    const levels = ['', 'weak', 'fair', 'good', 'good', 'strong'];
+    const texts = ['', '弱', '一般', '良好', '良好', '强'];
+
+    document.getElementById('strengthFill').className = 'strength-fill ' + levels[score];
+    document.getElementById('strengthText').textContent = texts[score] ? `密码强度：${texts[score]}` : '';
+  }
+
+  /**
+   * 修改主密码
+   */
+  async changePassword() {
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmNewPassword').value;
+    const errorEl = document.getElementById('passwordError');
+
+    // 验证
+    if (!currentPassword) {
+      errorEl.textContent = '请输入当前密码';
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      errorEl.textContent = '新密码至少需要 6 个字符';
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      errorEl.textContent = '两次输入的密码不一致';
+      return;
+    }
+
+    try {
+      // 验证当前密码
+      const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
+      const isValid = await CryptoUtils.verifyMasterPassword(
+        currentPassword,
+        result.masterPasswordHash,
+        result.masterPasswordSalt
+      );
+
+      if (!isValid) {
+        errorEl.textContent = '当前密码错误';
+        return;
+      }
+
+      // 创建新密码哈希
+      const { hash, salt } = await CryptoUtils.createMasterPasswordHash(newPassword);
+
+      // 保存新密码
+      await chrome.storage.local.set({
+        masterPasswordHash: hash,
+        masterPasswordSalt: salt
+      });
+
+      // 更新会话
+      await sessionManager.createSession(newPassword);
+
+      this.hidePasswordModal();
+      this.showToast('主密码已修改', 'success');
+    } catch (error) {
+      console.error('修改密码失败:', error);
+      errorEl.textContent = '修改失败，请重试';
+    }
   }
 }
 

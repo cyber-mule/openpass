@@ -222,56 +222,27 @@ class TwoFAApp {
   }
 
   /**
-   * 从 storage 加载密钥（解密）
+   * 从 storage 加载密钥（明文存储）
    */
   async loadSecrets() {
-    return new Promise(async (resolve) => {
-      chrome.storage.local.get(['encryptedSecrets', 'secrets'], async (result) => {
-        // 优先使用加密存储
-        if (result.encryptedSecrets) {
-          try {
-            const sessionKey = await this.getSessionKey();
-            if (sessionKey) {
-              const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
-              this.secrets = JSON.parse(decrypted);
-            } else {
-              // 无会话，数据无法解密，显示空
-              this.secrets = [];
-            }
-          } catch (error) {
-            console.error('解密失败:', error);
-            this.secrets = [];
-          }
-        } else if (result.secrets) {
-          // 兼容旧版本
-          this.secrets = result.secrets;
-        } else {
-          this.secrets = [];
-        }
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['secrets'], (result) => {
+        this.secrets = result.secrets || [];
         resolve();
       });
     });
   }
 
   /**
-   * 保存密钥到 storage（加密）
+   * 保存密钥到 storage（明文存储）
    */
   async saveSecrets() {
-    // 确保会话存在
-    const sessionKey = await this.ensureSession();
-    if (!sessionKey) {
-      throw new Error('需要验证主密码');
-    }
-
-    const json = JSON.stringify(this.secrets);
-    const encrypted = await CryptoUtils.encrypt(json, sessionKey);
-
-    // 同时保存明文站点列表（用于 badge 显示）
+    // 同时保存站点列表（用于 badge 显示）
     const sitesList = this.secrets.map(s => ({ site: s.site }));
 
     return new Promise((resolve) => {
       chrome.storage.local.set({
-        encryptedSecrets: encrypted,
+        secrets: this.secrets,
         sitesList: sitesList
       }, resolve);
     });

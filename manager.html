@@ -36,6 +36,13 @@
           </svg>
           <span>备份恢复</span>
         </button>
+        <button class="nav-item" data-page="settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>设置</span>
+        </button>
         <button class="nav-item" data-page="about">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"></circle>
@@ -181,6 +188,27 @@
               <strong>安全提示</strong>
               <p>备份文件包含明文密钥，请妥善保管，不要上传到公共位置！</p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 设置页 -->
+      <div id="settingsPage" class="page">
+        <header class="page-header">
+          <h1>设置</h1>
+        </header>
+
+        <div class="page-content">
+          <div class="settings-section">
+            <h3>主密码</h3>
+            <p class="settings-desc">主密码用于保护导入/导出操作和管理页面访问</p>
+            <button id="changePasswordBtn" class="btn-secondary">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              修改主密码
+            </button>
           </div>
         </div>
       </div>
@@ -336,6 +364,47 @@
         <button id="cancelImportBtn" class="btn-secondary">取消</button>
         <button id="confirmImportBtn" class="btn-primary">导入</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 修改主密码模态框 -->
+  <div id="passwordModal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3>修改主密码</h3>
+        <button class="modal-close" id="closePasswordModalBtn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <form id="passwordForm" class="modal-form">
+        <div class="form-group">
+          <label for="currentPassword">当前密码</label>
+          <input type="password" id="currentPassword" placeholder="输入当前主密码" autocomplete="current-password">
+        </div>
+        <div class="form-group">
+          <label for="newPassword">新密码</label>
+          <input type="password" id="newPassword" placeholder="输入新主密码" autocomplete="new-password">
+          <div class="password-strength">
+            <div class="strength-bar">
+              <div class="strength-fill" id="strengthFill"></div>
+            </div>
+            <span class="strength-text" id="strengthText"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="confirmNewPassword">确认新密码</label>
+          <input type="password" id="confirmNewPassword" placeholder="再次输入新密码" autocomplete="new-password">
+          <span id="passwordError" class="error"></span>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="cancelPasswordBtn" class="btn-secondary">取消</button>
+          <button type="submit" class="btn-primary">确认修改</button>
+        </div>
+      </form>
     </div>
   </div>
 
