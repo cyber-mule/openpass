@@ -19,29 +19,62 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Get version
+      - name: Get version info
         id: version
         run: |
           VERSION=$(node -p "require('./manifest.json').version")
           TAG_NAME="${GITHUB_REF#refs/tags/}"
+          BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          COMMIT_HASH="${{ github.sha }}"
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+
           echo "Building version: $VERSION"
           echo "Release tag: $TAG_NAME"
+          echo "Build time: $BUILD_TIME"
+          echo "Commit: $COMMIT_HASH"
+
+      - name: Inject build signature
+        run: |
+          # 使用 node 脚本注入构建签名
+          node -e "
+            const fs = require('fs');
+            const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            manifest.build_time = '${{ steps.version.outputs.build_time }}';
+            manifest.commit_hash = '${{ steps.version.outputs.commit_hash }}';
+            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2));
+          "
+
+          echo "Build signature injected into manifest.json"
 
       - name: Build extension
         run: |
           # 创建构建目录
           mkdir -p build/totppass
 
-          # 复制必要文件
+          # 复制所有必要文件
           cp -r icons build/totppass/
           cp manifest.json build/totppass/
           cp background.js build/totppass/
+          cp totp.js build/totppass/
+          cp jsQR.min.js build/totppass/
+
+          # Popup 页面
           cp popup.html build/totppass/
           cp popup.css build/totppass/
           cp popup.js build/totppass/
-          cp totp.js build/totppass/
+
+          # Manager 页面
+          cp manager.html build/totppass/
+          cp manager.css build/totppass/
+          cp manager.js build/totppass/
+
+          # Content Script
+          cp content.js build/totppass/
+          cp content.css build/totppass/
 
           # 打包为 zip
           cd build
@@ -62,3 +95,5 @@ jobs:
         run: |
           echo "✅ Release ${{ steps.version.outputs.tag_name }} built and uploaded successfully!"
           echo "📦 Package: totppass-${{ steps.version.outputs.tag_name }}.zip"
+          echo "🕐 Build time: ${{ steps.version.outputs.build_time }}"
+          echo "🔗 Commit: ${{ steps.version.outputs.commit_hash }}"

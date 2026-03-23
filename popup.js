@@ -17,8 +17,78 @@ class TwoFAApp {
   async init() {
     await this.loadSecrets();
     await this.getCurrentTab();
+    this.loadVersionInfo();
+    const hasPendingSecret = await this.checkPendingSecret();
     this.bindEvents();
-    this.showPage('homePage');
+    if (!hasPendingSecret) {
+      this.showPage('homePage');
+    }
+  }
+
+  /**
+   * 加载版本信息
+   */
+  loadVersionInfo() {
+    const manifest = chrome.runtime.getManifest();
+
+    // 更新版本号
+    document.getElementById('popupVersion').textContent = `v${manifest.version}`;
+
+    // 更新构建时间
+    const buildTime = manifest.build_time || '开发模式';
+    document.getElementById('popupBuildTime').textContent = buildTime;
+
+    // 更新 commit hash
+    const commitHash = manifest.commit_hash || 'dev';
+    const hashElement = document.getElementById('popupCommitHash');
+    hashElement.textContent = commitHash.substring(0, 7);
+
+    // 点击复制完整 hash
+    if (commitHash !== 'dev') {
+      hashElement.title = '点击复制完整 hash';
+      hashElement.addEventListener('click', async () => {
+        await this.copyToClipboard(commitHash);
+        this.showToast('Commit hash 已复制', 'success');
+      });
+    }
+  }
+
+  /**
+   * 检查是否有待添加的密钥（来自右键菜单解析）
+   */
+  async checkPendingSecret() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['pendingSecret'], async (result) => {
+        if (result.pendingSecret) {
+          const secret = result.pendingSecret;
+          // 清除待添加的密钥
+          await chrome.storage.local.remove(['pendingSecret']);
+
+          // 显示添加页面并预填充
+          this.showPage('createPage');
+          setTimeout(() => {
+            this.prefillSecret(secret);
+          }, 100);
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      });
+    });
+  }
+
+  /**
+   * 预填充密钥表单
+   */
+  prefillSecret(secret) {
+    document.getElementById('secretInput').value = secret.secret || '';
+    document.getElementById('siteInput').value = secret.site || '';
+    document.getElementById('nameInput').value = secret.name || '';
+    document.getElementById('digitsInput').value = '6';
+
+    // 触发验证
+    const event = new Event('input');
+    document.getElementById('secretInput').dispatchEvent(event);
   }
 
   /**
@@ -588,6 +658,33 @@ class TwoFAApp {
     modalOverlay.addEventListener('click', () => {
       this.pendingImportData = null;
       restoreModal.classList.add('hidden');
+    });
+
+    // 关于
+    const aboutBtn = document.getElementById('aboutBtn');
+    const aboutModal = document.getElementById('aboutModal');
+    const closeAboutBtn = document.getElementById('closeAboutBtn');
+    const aboutModalOverlay = aboutModal.querySelector('.modal-overlay');
+
+    aboutBtn.addEventListener('click', () => {
+      document.getElementById('dropdownMenu').classList.add('hidden');
+      aboutModal.classList.remove('hidden');
+    });
+
+    closeAboutBtn.addEventListener('click', () => {
+      aboutModal.classList.add('hidden');
+    });
+
+    aboutModalOverlay.addEventListener('click', () => {
+      aboutModal.classList.add('hidden');
+    });
+
+    // 打开管理页面
+    const openManagerBtn = document.getElementById('openManagerBtn');
+    openManagerBtn.addEventListener('click', () => {
+      document.getElementById('dropdownMenu').classList.add('hidden');
+      chrome.runtime.openOptionsPage();
+      window.close();
     });
   }
 

@@ -718,3 +718,141 @@ body {
 .btn-text:hover {
   color: var(--text-primary);
 }
+
+/* 下拉菜单分隔线 */
+.dropdown-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+/* 关于模态框 */
+.about-modal {
+  max-width: 280px;
+  text-align: center;
+}
+
+.about-header {
+  padding: 24px 16px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.about-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  background: var(--primary-light);
+  border-radius: 16px;
+  margin-bottom: 12px;
+  color: var(--primary-color);
+}
+
+.about-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.about-version {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.about-body {
+  padding: 16px;
+}
+
+.about-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.about-info {
+  text-align: left;
+  background: var(--bg-color);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.about-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.about-item:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.about-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.about-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.about-value a,
+a.about-value {
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+.about-value a:hover,
+a.about-value:hover {
+  text-decoration: underline;
+}
+
+.about-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-color);
+}
+
+/* 关于页面签名 */
+.about-signature {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.about-signature .signature-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.about-signature .signature-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.about-signature .signature-value {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+}
+
+.about-signature .signature-hash {
+  color: var(--primary-color);
+  cursor: pointer;
+  padding: 2px 6px;
+  background: var(--primary-light);
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.about-signature .signature-hash:hover {
+  background: var(--primary-color);
+  color: #fff;
+}
