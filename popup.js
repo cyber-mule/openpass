@@ -663,9 +663,19 @@ class TwoFAApp {
       this.showPage('createPage');
     });
 
+    // 快捷扫描按钮
+    document.getElementById('quickScanBtn').addEventListener('click', () => {
+      this.showPage('createPage');
+    });
+
     // 快捷管理按钮
     document.getElementById('quickManagerBtn').addEventListener('click', () => {
       chrome.tabs.create({ url: 'manager.html' });
+    });
+
+    // 空状态添加按钮
+    document.getElementById('emptyAddBtn').addEventListener('click', () => {
+      this.showPage('createPage');
     });
 
     // 返回按钮

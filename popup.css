@@ -358,14 +358,72 @@ body {
 
 /* 默认状态 */
 .default-state {
-  padding: 16px 0;
+  padding: 12px 0;
+}
+
+/* 统计卡片 */
+.stats-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, var(--primary-color) 0%, #7c3aed 100%);
+  padding: 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  color: white;
+}
+
+.stats-icon {
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stats-info {
+  flex: 1;
+}
+
+.stats-count {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stats-label {
+  font-size: 12px;
+  opacity: 0.9;
+  margin-top: 2px;
+}
+
+.stats-add-btn {
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.stats-add-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 /* 快捷操作 */
 .quick-actions {
   display: flex;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .quick-action-btn {
@@ -373,8 +431,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 16px 12px;
+  gap: 6px;
+  padding: 14px 10px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
@@ -398,53 +456,19 @@ body {
   font-weight: 500;
 }
 
-/* 统计卡片 */
-.stats-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  background: linear-gradient(135deg, var(--primary-color) 0%, #7c3aed 100%);
-  padding: 20px;
-  border-radius: var(--radius);
-  margin-bottom: 20px;
-  color: white;
-}
-
-.stats-icon {
-  width: 56px;
-  height: 56px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stats-count {
-  font-size: 32px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.stats-label {
-  font-size: 13px;
-  opacity: 0.9;
-  margin-top: 4px;
-}
-
 /* 使用提示 */
-.tips-section {
+.tips-card {
   background: var(--bg-color);
   border-radius: var(--radius);
-  padding: 12px;
+  padding: 12px 14px;
 }
 
 .tip-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  font-size: 13px;
+  padding: 6px 0;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
@@ -459,29 +483,32 @@ body {
 .tip-item svg {
   flex-shrink: 0;
   color: var(--primary-color);
+  opacity: 0.7;
 }
 
 /* 空状态 */
 .empty-state {
   text-align: center;
-  padding: 40px 20px;
+  padding: 32px 20px;
 }
 
 .empty-icon {
-  margin-bottom: 16px;
-  opacity: 0.5;
+  margin-bottom: 12px;
+  opacity: 0.4;
+  color: var(--text-muted);
 }
 
 .empty-state h3 {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   color: var(--text-primary);
 }
 
 .empty-state p {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
+  margin-bottom: 0;
 }
 
 .empty-state.hidden {
