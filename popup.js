@@ -161,25 +161,32 @@ class TwoFAApp {
   loadVersionInfo() {
     const manifest = chrome.runtime.getManifest();
 
-    // 更新版本号
-    document.getElementById('popupVersion').textContent = `v${manifest.version}`;
+    // 更新版本号（元素可能在关于页面中）
+    const versionEl = document.getElementById('popupVersion');
+    if (versionEl) {
+      versionEl.textContent = `v${manifest.version}`;
+    }
 
     // 更新构建时间
-    const buildTime = manifest.build_time || '开发模式';
-    document.getElementById('popupBuildTime').textContent = buildTime;
+    const buildTimeEl = document.getElementById('popupBuildTime');
+    if (buildTimeEl) {
+      buildTimeEl.textContent = manifest.build_time || '开发模式';
+    }
 
     // 更新 commit hash
     const commitHash = manifest.commit_hash || 'dev';
     const hashElement = document.getElementById('popupCommitHash');
-    hashElement.textContent = commitHash.substring(0, 7);
+    if (hashElement) {
+      hashElement.textContent = commitHash.substring(0, 7);
 
-    // 点击复制完整 hash
-    if (commitHash !== 'dev') {
-      hashElement.title = '点击复制完整 hash';
-      hashElement.addEventListener('click', async () => {
-        await this.copyToClipboard(commitHash);
-        this.showToast('Commit hash 已复制', 'success');
-      });
+      // 点击复制完整 hash
+      if (commitHash !== 'dev') {
+        hashElement.title = '点击复制完整 hash';
+        hashElement.addEventListener('click', async () => {
+          await this.copyToClipboard(commitHash);
+          this.showToast('Commit hash 已复制', 'success');
+        });
+      }
     }
   }
 

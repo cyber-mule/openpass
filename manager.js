@@ -1,6 +1,6 @@
 /**
  * TOTPPass - Manager Page Logic
- * 管理页面需要认证，页面失焦后锁定
+ * 管理页面需要认证，15分钟无操作超时
  */
 
 class ManagerApp {
@@ -30,8 +30,11 @@ class ManagerApp {
 
     this.isAuthenticated = true;
 
-    // 监听页面可见性，失焦后锁定
-    this.setupVisibilityListener();
+    // 更新活动时间
+    await sessionManager.updateActivity();
+
+    // 设置活动监听
+    this.setupActivityListener();
 
     await this.loadSecrets();
     this.loadVersionSignature();
@@ -41,19 +44,23 @@ class ManagerApp {
   }
 
   /**
-   * 设置页面可见性监听
+   * 设置活动监听（用户操作时延长超时）
    */
-  setupVisibilityListener() {
-    document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState === 'hidden') {
-        // 页面隐藏时清除会话，下次需要重新认证
-        await sessionManager.clearSession();
-      }
-    });
+  setupActivityListener() {
+    // 用户交互时更新活动时间
+    const updateActivity = () => sessionManager.updateActivity();
 
-    // 页面关闭时也清除会话
-    window.addEventListener('beforeunload', async () => {
-      await sessionManager.clearSession();
+    document.addEventListener('click', updateActivity);
+    document.addEventListener('keydown', updateActivity);
+    document.addEventListener('mousemove', updateActivity, { passive: true });
+
+    // 页面可见时检查会话
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible') {
+        if (!await sessionManager.isAuthenticated()) {
+          window.location.href = 'auth.html?redirect=manager.html';
+        }
+      }
     });
   }
 
@@ -775,11 +782,16 @@ class ManagerApp {
         masterPasswordSalt: salt
       });
 
-      // 更新会话
-      await sessionManager.createSession(newPassword);
+      // 清除会话，要求重新认证
+      await sessionManager.clearSession();
 
       this.hidePasswordModal();
-      this.showToast('主密码已修改', 'success');
+      this.showToast('主密码已修改，请重新登录', 'success');
+
+      // 跳转到认证页面
+      setTimeout(() => {
+        window.location.href = 'auth.html?redirect=manager.html';
+      }, 1000);
     } catch (error) {
       console.error('修改密码失败:', error);
       errorEl.textContent = '修改失败，请重试';

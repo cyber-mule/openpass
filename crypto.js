@@ -165,19 +165,43 @@ class CryptoUtils {
 
 // 会话管理
 class SessionManager {
+  constructor() {
+    this.timeout = 15 * 60 * 1000; // 15 分钟超时
+  }
+
   /**
-   * 创建会话（存储到 chrome.storage.session）
+   * 创建会话
    */
   async createSession(masterPassword) {
+    const expiresAt = Date.now() + this.timeout;
     await chrome.storage.session.set({ sessionKey: masterPassword });
+    await chrome.storage.local.set({ sessionExpiresAt: expiresAt });
   }
 
   /**
    * 获取会话密钥
    */
   async getSessionKey() {
+    // 检查是否过期
+    const localResult = await chrome.storage.local.get(['sessionExpiresAt']);
+    if (localResult.sessionExpiresAt && Date.now() > localResult.sessionExpiresAt) {
+      await this.clearSession();
+      return null;
+    }
+
     const result = await chrome.storage.session.get(['sessionKey']);
     return result.sessionKey || null;
+  }
+
+  /**
+   * 更新活动时间（延长超时）
+   */
+  async updateActivity() {
+    const key = await chrome.storage.session.get(['sessionKey']);
+    if (key.sessionKey) {
+      const expiresAt = Date.now() + this.timeout;
+      await chrome.storage.local.set({ sessionExpiresAt: expiresAt });
+    }
   }
 
   /**
@@ -185,6 +209,7 @@ class SessionManager {
    */
   async clearSession() {
     await chrome.storage.session.remove(['sessionKey']);
+    await chrome.storage.local.remove(['sessionExpiresAt']);
   }
 
   /**
@@ -193,6 +218,13 @@ class SessionManager {
   async isAuthenticated() {
     const key = await this.getSessionKey();
     return key !== null;
+  }
+
+  /**
+   * 设置超时时间（分钟）
+   */
+  setTimeout(minutes) {
+    this.timeout = minutes * 60 * 1000;
   }
 }
 
