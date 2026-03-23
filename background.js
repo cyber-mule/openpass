@@ -149,8 +149,8 @@ async function storePendingSecret(secret, tab) {
   if (tab && tab.url) {
     const urlInfo = parseUrl(tab.url);
     if (urlInfo && !secret.site) {
-      // 保存完整 origin（协议+域名+端口）
-      secret.site = urlInfo.origin;
+      // 保存完整 URL，用户可以自行修改
+      secret.site = urlInfo.fullUrl;
     }
   }
 

@@ -663,7 +663,8 @@ class TwoFAApp {
     if (this.currentUrl) {
       const urlInfo = this.parseUrl(this.currentUrl);
       if (urlInfo) {
-        siteInput.value = urlInfo.origin;
+        // 保存完整 URL，用户可以自行修改
+        siteInput.value = urlInfo.fullUrl;
       }
     }
 
