@@ -291,10 +291,11 @@ class TwoFAApp {
       }
 
       return {
-        fullUrl: url,
-        fullDomain: hostname,
-        mainDomain: mainDomain,
-        origin: urlObj.origin
+        fullUrl: urlObj.href,           // 完整 URL
+        origin: urlObj.origin,          // 协议+域名+端口
+        pathname: urlObj.pathname,      // 路径
+        fullDomain: hostname,           // 完整域名
+        mainDomain: mainDomain          // 根域名
       };
     } catch (e) {
       return null;
@@ -302,41 +303,59 @@ class TwoFAApp {
   }
 
   /**
-   * 匹配密钥
+   * 匹配密钥（优先级：完整URL > 域名 > 根域名）
    */
   matchSecrets(url) {
     const urlInfo = this.parseUrl(url);
     if (!urlInfo) return [];
 
     const matches = [];
+    const fullUrlLower = urlInfo.fullUrl.toLowerCase();
+    const originLower = urlInfo.origin.toLowerCase();
+    const fullDomainLower = urlInfo.fullDomain.toLowerCase();
+    const mainDomainLower = urlInfo.mainDomain.toLowerCase();
 
     for (const secret of this.secrets) {
       const site = secret.site.toLowerCase();
-      const fullUrl = urlInfo.fullUrl.toLowerCase();
-      const fullDomain = urlInfo.fullDomain.toLowerCase();
-      const mainDomain = urlInfo.mainDomain.toLowerCase();
-
       let matchType = null;
+      let priority = 999;
 
-      if (fullUrl.includes(site) || site.includes(fullUrl)) {
+      // 1. 完整 URL 匹配（最高优先级）
+      if (fullUrlLower === site || fullUrlLower.startsWith(site)) {
         matchType = 'fullUrl';
-      } else if (fullDomain === site || site === fullDomain) {
+        priority = 1;
+      }
+      // 2. Origin 匹配
+      else if (originLower === site) {
+        matchType = 'origin';
+        priority = 2;
+      }
+      // 3. 完整域名匹配
+      else if (fullDomainLower === site) {
         matchType = 'fullDomain';
-      } else if (mainDomain === site || site === mainDomain) {
+        priority = 3;
+      }
+      // 4. 根域名匹配
+      else if (mainDomainLower === site) {
         matchType = 'mainDomain';
-      } else if (fullDomain.includes(site) || site.includes(fullDomain)) {
+        priority = 4;
+      }
+      // 5. 包含匹配（最低优先级）
+      else if (fullDomainLower.includes(site) || site.includes(fullDomainLower)) {
         matchType = 'contains';
+        priority = 5;
       }
 
       if (matchType) {
         matches.push({
           ...secret,
           matchType,
-          priority: ['fullUrl', 'fullDomain', 'mainDomain', 'contains'].indexOf(matchType)
+          priority
         });
       }
     }
 
+    // 按优先级排序
     matches.sort((a, b) => a.priority - b.priority);
     return matches;
   }
@@ -504,6 +523,8 @@ class TwoFAApp {
 
     const formatClass = secret.digits === 8 ? 'format-8' : 'format-6';
     const formattedCode = this.formatCode(result.code);
+    const remaining = result.remainingSeconds;
+    const progressPercent = (remaining / 30) * 100;
 
     card.innerHTML = `
       <div class="secret-card-header">
@@ -528,12 +549,9 @@ class TwoFAApp {
       </div>
       <div class="secret-card-code">
         <span class="otp-display ${formatClass}" data-id="${secret.id}">${formattedCode}</span>
-        <span class="timer-mini" data-id="${secret.id}">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          <span class="timer-text">${result.remainingSeconds}s</span>
+        <span class="timer-badge ${remaining <= 5 ? 'danger' : remaining <= 10 ? 'warning' : ''}" data-id="${secret.id}">
+          <span class="timer-progress" style="width: ${progressPercent}%"></span>
+          <span class="timer-text">${remaining}s</span>
         </span>
       </div>
     `;
@@ -596,18 +614,23 @@ class TwoFAApp {
       this.codeData.set(secret.id, result.code);
 
       const otpDisplay = card.querySelector('.otp-display');
-      const timerMini = card.querySelector('.timer-mini');
-      const timerText = timerMini.querySelector('.timer-text');
+      const timerBadge = card.querySelector('.timer-badge');
+      const timerText = timerBadge.querySelector('.timer-text');
+      const timerProgress = timerBadge.querySelector('.timer-progress');
+
+      const remaining = result.remainingSeconds;
+      const progressPercent = (remaining / 30) * 100;
 
       otpDisplay.textContent = this.formatCode(result.code);
-      timerText.textContent = `${result.remainingSeconds}s`;
+      timerText.textContent = `${remaining}s`;
+      timerProgress.style.width = `${progressPercent}%`;
 
       // 更新计时器样式
-      timerMini.classList.remove('warning', 'danger');
-      if (result.remainingSeconds <= 5) {
-        timerMini.classList.add('danger');
-      } else if (result.remainingSeconds <= 10) {
-        timerMini.classList.add('warning');
+      timerBadge.classList.remove('warning', 'danger');
+      if (remaining <= 5) {
+        timerBadge.classList.add('danger');
+      } else if (remaining <= 10) {
+        timerBadge.classList.add('warning');
       }
     }, 1000);
 
@@ -640,13 +663,76 @@ class TwoFAApp {
     if (this.currentUrl) {
       const urlInfo = this.parseUrl(this.currentUrl);
       if (urlInfo) {
-        siteInput.value = urlInfo.fullDomain;
+        siteInput.value = urlInfo.origin;
       }
     }
 
     document.getElementById('secretInput').value = '';
     document.getElementById('nameInput').value = '';
     document.getElementById('secretError').textContent = '';
+
+    // 隐藏验证码预览
+    document.getElementById('codePreview').classList.add('hidden');
+
+    // 清除预览计时器
+    if (this.previewTimer) {
+      clearInterval(this.previewTimer);
+      this.previewTimer = null;
+    }
+  }
+
+  /**
+   * 更新验证码预览
+   */
+  async updateCodePreview() {
+    const secretInput = document.getElementById('secretInput');
+    const digitsInput = document.getElementById('digitsInput');
+    const codePreview = document.getElementById('codePreview');
+    const previewCode = document.getElementById('previewCode');
+    const previewTimer = document.getElementById('previewTimer');
+
+    const secret = secretInput.value.trim().replace(/\s/g, '').toUpperCase();
+
+    if (!secret) {
+      codePreview.classList.add('hidden');
+      if (this.previewTimer) {
+        clearInterval(this.previewTimer);
+        this.previewTimer = null;
+      }
+      return;
+    }
+
+    try {
+      const digits = parseInt(digitsInput.value);
+      const result = await TOTP.generate(secret, digits);
+
+      // 显示预览
+      codePreview.classList.remove('hidden');
+      previewCode.textContent = this.formatCode(result.code);
+      previewTimer.textContent = `${result.remainingSeconds}s`;
+
+      // 启动计时器
+      if (this.previewTimer) {
+        clearInterval(this.previewTimer);
+      }
+
+      this.previewTimer = setInterval(async () => {
+        try {
+          const newResult = await TOTP.generate(secret, digits);
+          previewCode.textContent = this.formatCode(newResult.code);
+          previewTimer.textContent = `${newResult.remainingSeconds}s`;
+        } catch (e) {
+          // 忽略错误
+        }
+      }, 1000);
+
+    } catch (error) {
+      codePreview.classList.add('hidden');
+      if (this.previewTimer) {
+        clearInterval(this.previewTimer);
+        this.previewTimer = null;
+      }
+    }
   }
 
   /**
@@ -690,6 +776,16 @@ class TwoFAApp {
     // 搜索
     document.getElementById('searchInput').addEventListener('input', (e) => {
       this.renderSearchResults(e.target.value.trim());
+    });
+
+    // 密钥输入实时预览
+    document.getElementById('secretInput').addEventListener('input', () => {
+      this.updateCodePreview();
+    });
+
+    // 验证码长度变化
+    document.getElementById('digitsInput').addEventListener('change', () => {
+      this.updateCodePreview();
     });
 
     // 创建表单

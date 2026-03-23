@@ -145,11 +145,12 @@ function parseOTPAuthUrl(data) {
  * 存储待添加的密钥
  */
 async function storePendingSecret(secret, tab) {
-  // 如果有当前标签页，尝试获取域名
+  // 如果有当前标签页，尝试获取完整 URL
   if (tab && tab.url) {
     const urlInfo = parseUrl(tab.url);
     if (urlInfo && !secret.site) {
-      secret.site = urlInfo.fullDomain;
+      // 保存完整 origin（协议+域名+端口）
+      secret.site = urlInfo.origin;
     }
   }
 

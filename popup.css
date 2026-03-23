@@ -301,6 +301,61 @@ body {
   content: '';
 }
 
+.timer-badge {
+  position: relative;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary-color);
+  background: var(--primary-light);
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  min-width: 36px;
+}
+
+.timer-badge .timer-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--primary-color);
+  opacity: 0.15;
+  transition: width 1s linear;
+}
+
+.timer-badge .timer-text {
+  position: relative;
+  z-index: 1;
+}
+
+.timer-badge.warning {
+  color: var(--warning-color);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.timer-badge.warning .timer-progress {
+  background: var(--warning-color);
+}
+
+.timer-badge.danger {
+  color: var(--danger-color);
+  background: rgba(239, 68, 68, 0.1);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.timer-badge.danger .timer-progress {
+  background: var(--danger-color);
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+/* 旧样式兼容 */
 .timer-mini {
   font-size: 11px;
   color: var(--text-muted);
@@ -648,6 +703,48 @@ body {
 .btn-primary:disabled {
   background: var(--text-muted);
   cursor: not-allowed;
+}
+
+/* 验证码预览 */
+.code-preview {
+  background: linear-gradient(135deg, var(--primary-color) 0%, #7c3aed 100%);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  color: white;
+}
+
+.code-preview.hidden {
+  display: none;
+}
+
+.preview-label {
+  font-size: 11px;
+  opacity: 0.8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.preview-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.preview-code {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+
+.preview-timer {
+  font-size: 14px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 4px 10px;
+  border-radius: 12px;
 }
 
 /* Toast 提示 */
