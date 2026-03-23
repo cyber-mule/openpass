@@ -6,7 +6,7 @@
  */
 
 // 导入 jsQR 库和 TOTP 库
-importScripts('jsQR.min.js', 'totp.js');
+importScripts('jsQR.min.js', 'totp.js', 'crypto.js');
 
 // 创建右键菜单
 chrome.runtime.onInstalled.addListener(() => {
@@ -20,12 +20,17 @@ chrome.runtime.onInstalled.addListener(() => {
 // 监听右键菜单点击
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'parseQRCode' && info.srcUrl) {
+    // 检查是否已设置主密码
+    const setupComplete = await checkSetupComplete();
+    if (!setupComplete) {
+      showNotification('请先设置主密码', '点击扩展图标开始设置');
+      return;
+    }
+
     try {
       const secret = await parseQRFromImageUrl(info.srcUrl);
       if (secret) {
-        // 发送消息给 popup 或存储临时数据
         await storePendingSecret(secret, tab);
-        // 显示通知
         showNotification('QR 码解析成功', '点击扩展图标完成添加');
       } else {
         showNotification('解析失败', '未能识别有效的 TOTP 密钥');
@@ -36,6 +41,17 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   }
 });
+
+/**
+ * 检查是否已完成设置
+ */
+async function checkSetupComplete() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['isSetupComplete'], (result) => {
+      resolve(result.isSetupComplete === true);
+    });
+  });
+}
 
 /**
  * 从图片 URL 解析 QR 码
@@ -177,7 +193,44 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ error: error.message });
       }
     })();
-    return true; // 保持消息通道开启
+    return true;
+  }
+
+  if (request.action === 'checkSetup') {
+    (async () => {
+      const setupComplete = await checkSetupComplete();
+      sendResponse({ setupComplete });
+    })();
+    return true;
+  }
+
+  if (request.action === 'getSecrets') {
+    (async () => {
+      try {
+        // 检查是否已设置主密码
+        const setupComplete = await checkSetupComplete();
+        if (!setupComplete) {
+          sendResponse({ error: 'not_setup' });
+          return;
+        }
+
+        // 获取加密的密钥
+        const result = await chrome.storage.local.get(['encryptedSecrets', 'secrets']);
+        if (result.encryptedSecrets && request.sessionKey) {
+          const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, request.sessionKey);
+          const secrets = JSON.parse(decrypted);
+          sendResponse({ secrets });
+        } else if (result.secrets) {
+          sendResponse({ secrets: result.secrets });
+        } else {
+          sendResponse({ secrets: [] });
+        }
+      } catch (error) {
+        console.error('获取密钥失败:', error);
+        sendResponse({ error: error.message });
+      }
+    })();
+    return true;
   }
 });
 
@@ -199,7 +252,7 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 
 // 监听存储变化
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'local' && changes.secrets) {
+  if (namespace === 'local' && (changes.secrets || changes.encryptedSecrets || changes.sitesList)) {
     // 当密钥变化时，更新当前标签页的 badge
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0] && tabs[0].url) {
@@ -286,17 +339,39 @@ async function updateBadgeForTab(tabId, url) {
     return;
   }
 
-  // 获取存储的密钥
-  chrome.storage.local.get(['secrets'], (result) => {
-    const secrets = result.secrets || [];
-    const matches = matchSecrets(url, secrets);
+  // 获取存储的站点列表（明文，用于 badge 显示）
+  chrome.storage.local.get(['sitesList', 'secrets'], (result) => {
+    // 优先使用明文站点列表
+    let sites = result.sitesList || [];
 
-    if (matches.length > 0) {
-      // 显示匹配数量
-      chrome.action.setBadgeText({ tabId, text: matches.length.toString() });
+    // 兼容旧版本
+    if (sites.length === 0 && result.secrets) {
+      sites = result.secrets.map(s => ({ site: s.site }));
+    }
+
+    const urlInfo = parseUrl(url);
+    if (!urlInfo) {
+      chrome.action.setBadgeText({ tabId, text: '' });
+      return;
+    }
+
+    // 匹配站点
+    let matchCount = 0;
+    for (const item of sites) {
+      const site = item.site.toLowerCase();
+      const fullDomain = urlInfo.fullDomain.toLowerCase();
+      const mainDomain = urlInfo.mainDomain.toLowerCase();
+
+      if (fullDomain.includes(site) || site.includes(fullDomain) ||
+          mainDomain.includes(site) || site.includes(mainDomain)) {
+        matchCount++;
+      }
+    }
+
+    if (matchCount > 0) {
+      chrome.action.setBadgeText({ tabId, text: matchCount.toString() });
       chrome.action.setBadgeBackgroundColor({ tabId, color: '#4f46e5' });
     } else {
-      // 清除 badge
       chrome.action.setBadgeText({ tabId, text: '' });
     }
   });

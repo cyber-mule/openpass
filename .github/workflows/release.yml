@@ -60,6 +60,7 @@ jobs:
           cp manifest.json build/totppass/
           cp background.js build/totppass/
           cp totp.js build/totppass/
+          cp crypto.js build/totppass/
           cp jsQR.min.js build/totppass/
 
           # Popup 页面
@@ -71,6 +72,10 @@ jobs:
           cp manager.html build/totppass/
           cp manager.css build/totppass/
           cp manager.js build/totppass/
+
+          # Setup 和 Auth 页面
+          cp setup.html build/totppass/
+          cp auth.html build/totppass/
 
           # Content Script
           cp content.js build/totppass/

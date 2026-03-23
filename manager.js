@@ -1,5 +1,6 @@
 /**
  * TOTPPass - Manager Page Logic
+ * 支持主密码认证和加密存储
  */
 
 class ManagerApp {
@@ -8,11 +9,27 @@ class ManagerApp {
     this.timers = new Map();
     this.codeData = new Map();
     this.pendingImportData = null;
+    this.isAuthenticated = false;
 
     this.init();
   }
 
   async init() {
+    // 检查是否已设置主密码
+    const setupComplete = await this.checkSetup();
+    if (!setupComplete) {
+      window.location.href = 'setup.html';
+      return;
+    }
+
+    // 检查会话
+    if (!sessionManager.isAuthenticated()) {
+      window.location.href = 'auth.html?redirect=manager.html';
+      return;
+    }
+
+    this.isAuthenticated = true;
+
     await this.loadSecrets();
     this.loadVersionSignature();
     this.bindEvents();
@@ -21,31 +38,43 @@ class ManagerApp {
   }
 
   /**
+   * 检查是否已完成设置
+   */
+  async checkSetup() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['isSetupComplete'], (result) => {
+        resolve(result.isSetupComplete === true);
+      });
+    });
+  }
+
+  /**
+   * 获取会话密钥
+   */
+  getSessionKey() {
+    return sessionManager.getSessionKey();
+  }
+
+  /**
    * 加载版本签名信息
    */
   loadVersionSignature() {
-    // 从 manifest 获取版本号
     const manifest = chrome.runtime.getManifest();
     const version = `v${manifest.version}`;
 
-    // 更新所有版本号显示
     document.getElementById('versionNumber').textContent = version;
     document.getElementById('sidebarVersion').textContent = version;
 
-    // 获取扩展 ID
     const extensionId = chrome.runtime.id;
     document.getElementById('extensionId').textContent = extensionId;
 
-    // 构建时间（从 manifest 中读取，如果没有则显示未知）
     const buildTime = manifest.build_time || '开发模式';
     document.getElementById('buildTime').textContent = buildTime;
 
-    // Commit hash（从 manifest 中读取，如果没有则显示未知）
     const commitHash = manifest.commit_hash || 'dev';
     const hashElement = document.getElementById('commitHash');
     hashElement.textContent = commitHash.substring(0, 7);
 
-    // 点击 commit hash 可复制
     if (commitHash !== 'dev') {
       hashElement.title = '点击复制完整 hash';
       hashElement.addEventListener('click', async () => {
@@ -56,23 +85,60 @@ class ManagerApp {
   }
 
   /**
-   * 加载密钥
+   * 加载密钥（解密）
    */
   async loadSecrets() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(['secrets'], (result) => {
-        this.secrets = result.secrets || [];
+    return new Promise(async (resolve) => {
+      chrome.storage.local.get(['encryptedSecrets', 'secrets'], async (result) => {
+        // 优先使用加密存储
+        if (result.encryptedSecrets) {
+          try {
+            const sessionKey = this.getSessionKey();
+            if (sessionKey) {
+              const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
+              this.secrets = JSON.parse(decrypted);
+            } else {
+              this.secrets = [];
+            }
+          } catch (error) {
+            console.error('解密失败:', error);
+            this.secrets = [];
+          }
+        } else if (result.secrets) {
+          // 兼容旧版本：迁移明文数据
+          this.secrets = result.secrets;
+          // 加密存储
+          await this.saveSecrets();
+          // 删除明文数据
+          await chrome.storage.local.remove(['secrets']);
+        } else {
+          this.secrets = [];
+        }
         resolve();
       });
     });
   }
 
   /**
-   * 保存密钥
+   * 保存密钥（加密）
    */
   async saveSecrets() {
+    const sessionKey = this.getSessionKey();
+    if (!sessionKey) {
+      throw new Error('会话已过期');
+    }
+
+    const json = JSON.stringify(this.secrets);
+    const encrypted = await CryptoUtils.encrypt(json, sessionKey);
+
+    // 同时保存明文站点列表（用于 badge 显示）
+    const sitesList = this.secrets.map(s => ({ site: s.site }));
+
     return new Promise((resolve) => {
-      chrome.storage.local.set({ secrets: this.secrets }, resolve);
+      chrome.storage.local.set({
+        encryptedSecrets: encrypted,
+        sitesList: sitesList
+      }, resolve);
     });
   }
 
@@ -188,12 +254,10 @@ class ManagerApp {
    * 显示页面
    */
   showPage(pageId) {
-    // 更新导航
     document.querySelectorAll('.nav-item').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.page === pageId);
     });
 
-    // 更新页面
     document.querySelectorAll('.page').forEach(page => {
       page.classList.toggle('active', page.id === pageId + 'Page');
     });
@@ -207,7 +271,6 @@ class ManagerApp {
     const emptyState = document.getElementById('emptyState');
     const noResult = document.getElementById('noResultState');
 
-    // 过滤
     let filteredSecrets = this.secrets;
     if (filter) {
       const lowerFilter = filter.toLowerCase();
@@ -217,13 +280,10 @@ class ManagerApp {
       );
     }
 
-    // 更新统计
     document.getElementById('totalCount').textContent = this.secrets.length;
 
-    // 清空
     tbody.innerHTML = '';
 
-    // 空状态
     if (this.secrets.length === 0) {
       emptyState.classList.remove('hidden');
       noResult.classList.add('hidden');
@@ -239,7 +299,6 @@ class ManagerApp {
     emptyState.classList.add('hidden');
     noResult.classList.add('hidden');
 
-    // 渲染行
     for (const secret of filteredSecrets) {
       const row = await this.createSecretRow(secret);
       tbody.appendChild(row);
@@ -302,7 +361,6 @@ class ManagerApp {
       </td>
     `;
 
-    // 复制
     tr.querySelector('.action-btn.copy').addEventListener('click', async () => {
       const code = this.codeData.get(secret.id);
       if (code) {
@@ -311,12 +369,10 @@ class ManagerApp {
       }
     });
 
-    // 编辑
     tr.querySelector('.action-btn.edit').addEventListener('click', () => {
       this.showSecretModal(secret);
     });
 
-    // 删除
     tr.querySelector('.action-btn.delete').addEventListener('click', async () => {
       if (confirm(`确定要删除 "${secret.name || secret.site}" 吗？`)) {
         this.secrets = this.secrets.filter(s => s.id !== secret.id);
@@ -411,7 +467,6 @@ class ManagerApp {
     const name = document.getElementById('nameInput').value.trim();
     const digits = parseInt(document.getElementById('digitsSelect').value);
 
-    // 验证
     if (!TOTP.isValidSecret(secret)) {
       document.getElementById('secretError').textContent = '密钥格式无效（至少需要 16 个字符）';
       return;
@@ -423,10 +478,8 @@ class ManagerApp {
     }
 
     if (id) {
-      // 编辑
       const index = this.secrets.findIndex(s => s.id === id);
       if (index !== -1) {
-        // 检查冲突
         const conflict = this.secrets.some(s => s.site === site && s.id !== id);
         if (conflict) {
           this.showToast('该站点已存在其他密钥', 'error');
@@ -443,7 +496,6 @@ class ManagerApp {
         };
       }
     } else {
-      // 新增
       const exists = this.secrets.some(s => s.site === site);
       if (exists) {
         this.showToast('该站点已存在密钥', 'error');
@@ -467,7 +519,7 @@ class ManagerApp {
   }
 
   /**
-   * 导出密钥
+   * 导出密钥（明文，带版本号）
    */
   exportSecrets() {
     if (this.secrets.length === 0) {
@@ -476,9 +528,11 @@ class ManagerApp {
     }
 
     const backupData = {
-      version: '1.0',
+      version: '2.0',
+      format: 'totppass-backup',
       exportTime: new Date().toISOString(),
       count: this.secrets.length,
+      encrypted: false,
       secrets: this.secrets
     };
 
@@ -505,7 +559,19 @@ class ManagerApp {
    */
   validateBackupData(data) {
     if (!data || typeof data !== 'object') return false;
-    if (!Array.isArray(data.secrets)) return false;
+
+    // 检查版本和格式
+    if (data.format === 'totppass-backup') {
+      // 新格式
+      if (!Array.isArray(data.secrets)) return false;
+    } else if (data.version === '1.0') {
+      // 旧格式兼容
+      if (!Array.isArray(data.secrets)) return false;
+    } else if (Array.isArray(data.secrets)) {
+      // 最简格式
+    } else {
+      return false;
+    }
 
     for (const secret of data.secrets) {
       if (!secret.secret || !secret.site) return false;
@@ -541,7 +607,6 @@ class ManagerApp {
           };
           updatedCount++;
         } else if (duplicateAction === 'both') {
-          // 保留两者，添加后缀
           const newSecret = {
             ...secret,
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),

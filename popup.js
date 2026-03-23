@@ -1,5 +1,6 @@
 /**
  * 2FA Authenticator - 弹窗逻辑
+ * 支持主密码认证和加密存储
  */
 
 class TwoFAApp {
@@ -7,14 +8,29 @@ class TwoFAApp {
     this.secrets = [];
     this.currentTab = null;
     this.currentUrl = null;
-    this.timers = new Map(); // 存储每个密钥的计时器
-    this.codeData = new Map(); // 存储每个密钥的当前验证码
-    this.pendingImportData = null; // 待导入的数据
+    this.timers = new Map();
+    this.codeData = new Map();
+    this.pendingImportData = null;
+    this.isAuthenticated = false;
 
     this.init();
   }
 
   async init() {
+    // 检查是否已设置主密码
+    const setupComplete = await this.checkSetup();
+    if (!setupComplete) {
+      this.showSetupPrompt();
+      return;
+    }
+
+    // 检查会话
+    if (!sessionManager.isAuthenticated()) {
+      this.showAuthForm();
+      return;
+    }
+
+    this.isAuthenticated = true;
     await this.loadSecrets();
     await this.getCurrentTab();
     this.loadVersionInfo();
@@ -23,6 +39,109 @@ class TwoFAApp {
     if (!hasPendingSecret) {
       this.showPage('homePage');
     }
+  }
+
+  /**
+   * 检查是否已完成设置
+   */
+  async checkSetup() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['isSetupComplete'], (result) => {
+        resolve(result.isSetupComplete === true);
+      });
+    });
+  }
+
+  /**
+   * 显示设置提示
+   */
+  showSetupPrompt() {
+    document.body.innerHTML = `
+      <div class="setup-prompt">
+        <div class="setup-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2>欢迎使用 TOTPPass</h2>
+        <p>请先设置主密码以保护你的密钥</p>
+        <button id="goSetupBtn" class="btn-primary">设置主密码</button>
+      </div>
+    `;
+
+    document.getElementById('goSetupBtn').addEventListener('click', () => {
+      chrome.tabs.create({ url: 'setup.html' });
+      window.close();
+    });
+  }
+
+  /**
+   * 显示认证表单
+   */
+  showAuthForm() {
+    document.body.innerHTML = `
+      <div class="auth-container">
+        <div class="auth-header">
+          <div class="auth-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <h2>验证主密码</h2>
+        </div>
+        <form id="authForm" class="auth-form">
+          <input type="password" id="authPassword" placeholder="输入主密码" autofocus>
+          <p class="auth-error" id="authError"></p>
+          <button type="submit" class="btn-primary">解锁</button>
+        </form>
+        <p class="auth-hint">忘记密码？<a href="#" id="openManager">打开管理页面</a></p>
+      </div>
+    `;
+
+    const form = document.getElementById('authForm');
+    const passwordInput = document.getElementById('authPassword');
+    const errorText = document.getElementById('authError');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = passwordInput.value;
+      if (!password) return;
+
+      try {
+        const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
+        const isValid = await CryptoUtils.verifyMasterPassword(
+          password,
+          result.masterPasswordHash,
+          result.masterPasswordSalt
+        );
+
+        if (isValid) {
+          sessionManager.createSession(password);
+          location.reload();
+        } else {
+          errorText.textContent = '主密码错误';
+          passwordInput.value = '';
+          passwordInput.focus();
+        }
+      } catch (error) {
+        errorText.textContent = '验证失败';
+      }
+    });
+
+    document.getElementById('openManager').addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: 'auth.html?redirect=manager.html' });
+      window.close();
+    });
+  }
+
+  /**
+   * 获取会话密钥
+   */
+  getSessionKey() {
+    return sessionManager.getSessionKey();
   }
 
   /**
@@ -92,23 +211,56 @@ class TwoFAApp {
   }
 
   /**
-   * 从 storage 加载密钥
+   * 从 storage 加载密钥（解密）
    */
   async loadSecrets() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(['secrets'], (result) => {
-        this.secrets = result.secrets || [];
+    return new Promise(async (resolve) => {
+      chrome.storage.local.get(['encryptedSecrets', 'secrets'], async (result) => {
+        // 优先使用加密存储
+        if (result.encryptedSecrets) {
+          try {
+            const sessionKey = this.getSessionKey();
+            if (sessionKey) {
+              const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
+              this.secrets = JSON.parse(decrypted);
+            } else {
+              this.secrets = [];
+            }
+          } catch (error) {
+            console.error('解密失败:', error);
+            this.secrets = [];
+          }
+        } else if (result.secrets) {
+          // 兼容旧版本
+          this.secrets = result.secrets;
+        } else {
+          this.secrets = [];
+        }
         resolve();
       });
     });
   }
 
   /**
-   * 保存密钥到 storage
+   * 保存密钥到 storage（加密）
    */
   async saveSecrets() {
+    const sessionKey = this.getSessionKey();
+    if (!sessionKey) {
+      throw new Error('会话已过期');
+    }
+
+    const json = JSON.stringify(this.secrets);
+    const encrypted = await CryptoUtils.encrypt(json, sessionKey);
+
+    // 同时保存明文站点列表（用于 badge 显示）
+    const sitesList = this.secrets.map(s => ({ site: s.site }));
+
     return new Promise((resolve) => {
-      chrome.storage.local.set({ secrets: this.secrets }, resolve);
+      chrome.storage.local.set({
+        encryptedSecrets: encrypted,
+        sitesList: sitesList
+      }, resolve);
     });
   }
 
