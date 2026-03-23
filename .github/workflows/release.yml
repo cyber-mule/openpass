@@ -1,0 +1,64 @@
+name: Build and Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+          echo "Release tag: $TAG_NAME"
+
+      - name: Build extension
+        run: |
+          # 创建构建目录
+          mkdir -p build/totppass
+
+          # 复制必要文件
+          cp -r icons build/totppass/
+          cp manifest.json build/totppass/
+          cp background.js build/totppass/
+          cp popup.html build/totppass/
+          cp popup.css build/totppass/
+          cp popup.js build/totppass/
+          cp totp.js build/totppass/
+
+          # 打包为 zip
+          cd build
+          zip -r ../totppass-${{ steps.version.outputs.tag_name }}.zip totppass
+          cd ..
+
+          echo "Extension packaged successfully"
+          ls -la totppass-*.zip
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: totppass-${{ steps.version.outputs.tag_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "✅ Release ${{ steps.version.outputs.tag_name }} built and uploaded successfully!"
+          echo "📦 Package: totppass-${{ steps.version.outputs.tag_name }}.zip"

@@ -25,6 +25,9 @@ yarn-error.log*
 *.pem
 *.pub
 
+# 构建目录
+build/
+
 # 测试覆盖率
 coverage/
 
@@ -34,3 +37,8 @@ coverage/
 
 # 开发工具脚本
 generate-icons.js
+
+# AI 助手上下文文件
+QWEN.md
+CLAUDE.md
+AGENTS.md
