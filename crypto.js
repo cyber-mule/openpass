@@ -166,55 +166,62 @@ class CryptoUtils {
 // 会话管理
 class SessionManager {
   constructor() {
-    this.sessionKey = null;
-    this.lastActivity = null;
     this.timeout = 5 * 60 * 1000; // 5 分钟超时
   }
 
   /**
-   * 创建会话
+   * 创建会话（存储到 chrome.storage.session）
    */
-  createSession(masterPassword) {
-    this.sessionKey = masterPassword;
-    this.lastActivity = Date.now();
+  async createSession(masterPassword) {
+    const sessionData = {
+      key: masterPassword,
+      lastActivity: Date.now()
+    };
+    await chrome.storage.session.set({ sessionData });
   }
 
   /**
    * 获取会话密钥
    */
-  getSessionKey() {
-    if (!this.sessionKey) return null;
+  async getSessionKey() {
+    const result = await chrome.storage.session.get(['sessionData']);
+    if (!result.sessionData) return null;
 
     // 检查超时
-    if (Date.now() - this.lastActivity > this.timeout) {
-      this.clearSession();
+    if (Date.now() - result.sessionData.lastActivity > this.timeout) {
+      await this.clearSession();
       return null;
     }
 
-    this.lastActivity = Date.now();
-    return this.sessionKey;
+    // 更新活动时间
+    await this.updateActivity();
+    return result.sessionData.key;
   }
 
   /**
    * 更新活动时间
    */
-  updateActivity() {
-    this.lastActivity = Date.now();
+  async updateActivity() {
+    const result = await chrome.storage.session.get(['sessionData']);
+    if (result.sessionData) {
+      result.sessionData.lastActivity = Date.now();
+      await chrome.storage.session.set({ sessionData: result.sessionData });
+    }
   }
 
   /**
    * 清除会话
    */
-  clearSession() {
-    this.sessionKey = null;
-    this.lastActivity = null;
+  async clearSession() {
+    await chrome.storage.session.remove(['sessionData']);
   }
 
   /**
    * 检查是否已认证
    */
-  isAuthenticated() {
-    return this.getSessionKey() !== null;
+  async isAuthenticated() {
+    const key = await this.getSessionKey();
+    return key !== null;
   }
 
   /**

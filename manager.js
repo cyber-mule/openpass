@@ -23,7 +23,7 @@ class ManagerApp {
     }
 
     // 检查会话
-    if (!sessionManager.isAuthenticated()) {
+    if (!await sessionManager.isAuthenticated()) {
       window.location.href = 'auth.html?redirect=manager.html';
       return;
     }
@@ -51,8 +51,8 @@ class ManagerApp {
   /**
    * 获取会话密钥
    */
-  getSessionKey() {
-    return sessionManager.getSessionKey();
+  async getSessionKey() {
+    return await sessionManager.getSessionKey();
   }
 
   /**

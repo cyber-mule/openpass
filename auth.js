@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (isValid) {
         // 创建会话
-        sessionManager.createSession(password);
+        await sessionManager.createSession(password);
 
         // 重置尝试次数
         await chrome.storage.local.remove(['authAttempts']);

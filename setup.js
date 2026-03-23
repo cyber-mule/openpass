@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       // 创建会话
-      sessionManager.createSession(password);
+      await sessionManager.createSession(password);
 
       // 跳转到管理页面
       window.location.href = 'manager.html';

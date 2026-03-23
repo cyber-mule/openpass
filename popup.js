@@ -25,7 +25,7 @@ class TwoFAApp {
     }
 
     // 检查会话
-    if (!sessionManager.isAuthenticated()) {
+    if (!await sessionManager.isAuthenticated()) {
       this.showAuthForm();
       return;
     }
@@ -118,7 +118,7 @@ class TwoFAApp {
         );
 
         if (isValid) {
-          sessionManager.createSession(password);
+          await sessionManager.createSession(password);
           location.reload();
         } else {
           errorText.textContent = '主密码错误';
@@ -140,8 +140,8 @@ class TwoFAApp {
   /**
    * 获取会话密钥
    */
-  getSessionKey() {
-    return sessionManager.getSessionKey();
+  async getSessionKey() {
+    return await sessionManager.getSessionKey();
   }
 
   /**
