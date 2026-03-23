@@ -300,10 +300,73 @@
       return;
     }
 
-    // 如果有多个匹配，使用第一个
-    const secret = matches[0];
+    // 如果有多个匹配，显示选择列表
+    if (matches.length > 1) {
+      showSecretSelector(input, button, matches);
+      return;
+    }
 
-    // 从 background 获取验证码
+    // 只有一个密钥，直接填充
+    await doFillCode(input, button, matches[0]);
+  }
+
+  /**
+   * 显示密钥选择列表
+   */
+  function showSecretSelector(input, button, matches) {
+    // 移除已存在的选择器
+    const existingSelector = document.querySelector('.totppass-selector');
+    if (existingSelector) existingSelector.remove();
+
+    const selector = document.createElement('div');
+    selector.className = 'totppass-selector';
+
+    let html = '<div class="totppass-selector-header">选择要填充的密钥</div>';
+    html += '<div class="totppass-selector-list">';
+
+    matches.forEach((secret, index) => {
+      const name = secret.name || secret.site;
+      html += `
+        <div class="totppass-selector-item" data-index="${index}">
+          <div class="totppass-selector-name">${name}</div>
+          <div class="totppass-selector-site">${secret.site}</div>
+        </div>
+      `;
+    });
+
+    html += '</div>';
+    selector.innerHTML = html;
+
+    // 定位选择器
+    const rect = button.getBoundingClientRect();
+    selector.style.top = `${rect.bottom + 8}px`;
+    selector.style.right = `${window.innerWidth - rect.right}px`;
+
+    document.body.appendChild(selector);
+
+    // 点击选项
+    selector.querySelectorAll('.totppass-selector-item').forEach((item, index) => {
+      item.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await doFillCode(input, button, matches[index]);
+        selector.remove();
+      });
+    });
+
+    // 点击其他地方关闭
+    const closeHandler = (e) => {
+      if (!selector.contains(e.target)) {
+        selector.remove();
+        document.removeEventListener('click', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+  }
+
+  /**
+   * 执行填充验证码
+   */
+  async function doFillCode(input, button, secret) {
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'generateCode',

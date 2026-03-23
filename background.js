@@ -54,56 +54,42 @@ async function checkSetupComplete() {
 }
 
 /**
- * 从图片 URL 解析 QR 码
+ * 从图片 URL 解析 QR 码（Service Worker 兼容）
  */
 async function parseQRFromImageUrl(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
+  try {
+    let blob;
 
-    img.onload = () => {
-      try {
-        const canvas = new OffscreenCanvas(img.width, img.height);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-        if (code && code.data) {
-          const secret = parseOTPAuthUrl(code.data);
-          resolve(secret);
-        } else {
-          resolve(null);
-        }
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    img.onerror = () => reject(new Error('图片加载失败'));
-
-    // 处理 data URL 和普通 URL
+    // 处理 data URL
     if (url.startsWith('data:')) {
-      img.src = url;
+      const response = await fetch(url);
+      blob = await response.blob();
     } else {
-      // 对于跨域图片，尝试通过 fetch 获取
-      fetch(url)
-        .then(response => response.blob())
-        .then(blob => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            img.src = reader.result;
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        })
-        .catch(() => {
-          // 如果 fetch 失败，直接尝试加载
-          img.src = url;
-        });
+      // 对于普通 URL，通过 fetch 获取
+      const response = await fetch(url, { mode: 'cors' });
+      blob = await response.blob();
     }
-  });
+
+    // 使用 createImageBitmap（Service Worker 兼容）
+    const imageBitmap = await createImageBitmap(blob);
+
+    // 使用 OffscreenCanvas 处理图片
+    const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imageBitmap, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+    if (code && code.data) {
+      return parseOTPAuthUrl(code.data);
+    }
+
+    return null;
+  } catch (error) {
+    console.error('解析 QR 码失败:', error);
+    throw error;
+  }
 }
 
 /**

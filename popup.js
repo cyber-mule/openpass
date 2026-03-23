@@ -959,12 +959,7 @@ class TwoFAApp {
       return;
     }
 
-    const exists = this.secrets.some(s => s.site === site);
-    if (exists) {
-      this.showToast('该站点已存在密钥');
-      return;
-    }
-
+    // 允许同站点多个密钥
     const newSecret = {
       id: Date.now().toString(),
       secret,
@@ -1007,13 +1002,7 @@ class TwoFAApp {
       return;
     }
 
-    // 检查是否与其他密钥冲突
-    const conflict = this.secrets.some(s => s.site === site && s.id !== id);
-    if (conflict) {
-      this.showToast('该站点已存在其他密钥');
-      return;
-    }
-
+    // 允许同站点多个密钥，直接更新
     this.secrets[index] = {
       ...this.secrets[index],
       secret,

@@ -478,14 +478,9 @@ class ManagerApp {
     }
 
     if (id) {
+      // 编辑现有密钥
       const index = this.secrets.findIndex(s => s.id === id);
       if (index !== -1) {
-        const conflict = this.secrets.some(s => s.site === site && s.id !== id);
-        if (conflict) {
-          this.showToast('该站点已存在其他密钥', 'error');
-          return;
-        }
-
         this.secrets[index] = {
           ...this.secrets[index],
           secret,
@@ -496,12 +491,7 @@ class ManagerApp {
         };
       }
     } else {
-      const exists = this.secrets.some(s => s.site === site);
-      if (exists) {
-        this.showToast('该站点已存在密钥', 'error');
-        return;
-      }
-
+      // 添加新密钥（允许同站点多个密钥）
       this.secrets.push({
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         secret,
