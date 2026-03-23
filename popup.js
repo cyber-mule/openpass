@@ -9,6 +9,7 @@ class TwoFAApp {
     this.currentUrl = null;
     this.timers = new Map(); // 存储每个密钥的计时器
     this.codeData = new Map(); // 存储每个密钥的当前验证码
+    this.pendingImportData = null; // 待导入的数据
 
     this.init();
   }
@@ -471,6 +472,223 @@ class TwoFAApp {
         error.textContent = '';
       }
     });
+
+    // 下拉菜单
+    this.bindDropdownEvents();
+
+    // 备份恢复
+    this.bindBackupEvents();
+  }
+
+  /**
+   * 绑定下拉菜单事件
+   */
+  bindDropdownEvents() {
+    const menuBtn = document.getElementById('menuBtn');
+    const dropdownMenu = document.getElementById('dropdownMenu');
+
+    // 点击菜单按钮切换显示
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdownMenu.classList.toggle('hidden');
+    });
+
+    // 点击其他地方关闭菜单
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.dropdown')) {
+        dropdownMenu.classList.add('hidden');
+      }
+    });
+  }
+
+  /**
+   * 绑定备份恢复事件
+   */
+  bindBackupEvents() {
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const fileInput = document.getElementById('fileInput');
+    const restoreModal = document.getElementById('restoreModal');
+    const mergeBtn = document.getElementById('mergeBtn');
+    const overwriteBtn = document.getElementById('overwriteBtn');
+    const cancelRestoreBtn = document.getElementById('cancelRestoreBtn');
+    const modalOverlay = restoreModal.querySelector('.modal-overlay');
+
+    // 导出
+    exportBtn.addEventListener('click', () => {
+      document.getElementById('dropdownMenu').classList.add('hidden');
+      this.exportSecrets();
+    });
+
+    // 导入
+    importBtn.addEventListener('click', () => {
+      document.getElementById('dropdownMenu').classList.add('hidden');
+      fileInput.click();
+    });
+
+    // 文件选择
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        // 验证数据格式
+        if (!this.validateBackupData(data)) {
+          this.showToast('备份文件格式无效');
+          return;
+        }
+
+        // 存储待导入数据
+        this.pendingImportData = data.secrets;
+
+        // 显示恢复选项对话框
+        document.getElementById('importCount').textContent = data.secrets.length;
+        document.getElementById('currentCount').textContent = this.secrets.length;
+        restoreModal.classList.remove('hidden');
+
+      } catch (err) {
+        console.error('导入失败:', err);
+        this.showToast('导入失败，请检查文件格式');
+      }
+
+      // 清空文件输入
+      fileInput.value = '';
+    });
+
+    // 合并
+    mergeBtn.addEventListener('click', async () => {
+      if (!this.pendingImportData) return;
+
+      await this.mergeSecrets(this.pendingImportData);
+      this.pendingImportData = null;
+      restoreModal.classList.add('hidden');
+    });
+
+    // 覆盖
+    overwriteBtn.addEventListener('click', async () => {
+      if (!this.pendingImportData) return;
+
+      if (confirm('覆盖将删除所有现有密钥，确定继续吗？')) {
+        await this.overwriteSecrets(this.pendingImportData);
+        this.pendingImportData = null;
+        restoreModal.classList.add('hidden');
+      }
+    });
+
+    // 取消
+    cancelRestoreBtn.addEventListener('click', () => {
+      this.pendingImportData = null;
+      restoreModal.classList.add('hidden');
+    });
+
+    // 点击遮罩关闭
+    modalOverlay.addEventListener('click', () => {
+      this.pendingImportData = null;
+      restoreModal.classList.add('hidden');
+    });
+  }
+
+  /**
+   * 验证备份数据格式
+   */
+  validateBackupData(data) {
+    if (!data || typeof data !== 'object') return false;
+    if (!Array.isArray(data.secrets)) return false;
+
+    for (const secret of data.secrets) {
+      if (!secret.secret || !secret.site) return false;
+      if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * 导出密钥
+   */
+  exportSecrets() {
+    if (this.secrets.length === 0) {
+      this.showToast('没有可导出的密钥');
+      return;
+    }
+
+    const backupData = {
+      version: '1.0',
+      exportTime: new Date().toISOString(),
+      count: this.secrets.length,
+      secrets: this.secrets
+    };
+
+    const json = JSON.stringify(backupData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `totppass-backup-${timestamp}.json`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+  }
+
+  /**
+   * 合并密钥
+   */
+  async mergeSecrets(importSecrets) {
+    let addedCount = 0;
+    let skippedCount = 0;
+
+    for (const secret of importSecrets) {
+      // 检查是否已存在相同站点
+      const exists = this.secrets.some(s => s.site.toLowerCase() === secret.site.toLowerCase());
+
+      if (!exists) {
+        // 生成新 ID
+        const newSecret = {
+          ...secret,
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          importedAt: new Date().toISOString()
+        };
+        this.secrets.push(newSecret);
+        addedCount++;
+      } else {
+        skippedCount++;
+      }
+    }
+
+    await this.saveSecrets();
+    this.renderHomePage();
+
+    if (skippedCount > 0) {
+      this.showToast(`已导入 ${addedCount} 个，跳过 ${skippedCount} 个重复`, 'success');
+    } else {
+      this.showToast(`已导入 ${addedCount} 个密钥`, 'success');
+    }
+  }
+
+  /**
+   * 覆盖密钥
+   */
+  async overwriteSecrets(importSecrets) {
+    // 重新生成 ID
+    this.secrets = importSecrets.map(secret => ({
+      ...secret,
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      importedAt: new Date().toISOString()
+    }));
+
+    await this.saveSecrets();
+    this.renderHomePage();
+    this.showToast(`已导入 ${this.secrets.length} 个密钥`, 'success');
   }
 
   /**
