@@ -12,7 +12,7 @@ importScripts('jsQR.min.js', 'totp.js', 'crypto.js');
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: 'parseQRCode',
-    title: '解析 QR 码添加密钥',
+    title: '识别并添加',
     contexts: ['image']
   });
 });
@@ -31,13 +31,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       const secret = await parseQRFromImageUrl(info.srcUrl);
       if (secret) {
         await storePendingSecret(secret, tab);
-        showNotification('QR 码解析成功', '点击扩展图标完成添加');
+        showNotification('识别成功', '点击扩展图标确认添加');
       } else {
-        showNotification('解析失败', '未能识别有效的 TOTP 密钥');
+        showNotification('识别失败', '未能识别有效的 TOTP 密钥');
       }
     } catch (error) {
       console.error('解析 QR 码失败:', error);
-      showNotification('解析失败', '无法读取图片中的 QR 码');
+      showNotification('识别失败', '无法读取图片中的 QR 码');
     }
   }
 });

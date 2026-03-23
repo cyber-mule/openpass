@@ -1,6 +1,6 @@
 /**
  * 2FA Authenticator - 弹窗逻辑
- * 弹窗无需认证，直接使用
+ * 弹窗默认不需要认证，只有导入/导出等敏感操作需要密码验证
  */
 
 class TwoFAApp {
@@ -70,48 +70,64 @@ class TwoFAApp {
   }
 
   /**
-   * 获取会话密钥（弹窗使用，无需认证但需要会话）
+   * 获取会话密钥（不阻塞，返回 null 表示无会话）
    */
   async getSessionKey() {
-    // 尝试从会话获取
-    let key = await sessionManager.getSessionKey();
-    if (key) return key;
-
-    // 会话不存在，显示密码输入
-    return await this.promptPassword();
+    return await sessionManager.getSessionKey();
   }
 
   /**
-   * 提示输入密码
+   * 确保会话存在（用于需要密码的操作）
    */
-  promptPassword() {
+  async ensureSession() {
+    let key = await sessionManager.getSessionKey();
+    if (key) return key;
+
+    // 显示密码验证对话框
+    return await this.showPasswordDialog();
+  }
+
+  /**
+   * 显示密码验证对话框
+   */
+  showPasswordDialog() {
     return new Promise((resolve) => {
-      document.body.innerHTML = `
-        <div class="auth-container">
-          <div class="auth-header">
-            <div class="auth-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
+      const modal = document.createElement('div');
+      modal.className = 'password-dialog-overlay';
+      modal.innerHTML = `
+        <div class="password-dialog">
+          <h3>验证主密码</h3>
+          <form id="passwordDialogForm">
+            <input type="password" id="dialogPassword" placeholder="输入主密码" autofocus>
+            <p class="error" id="dialogError"></p>
+            <div class="dialog-actions">
+              <button type="button" class="btn-cancel" id="dialogCancel">取消</button>
+              <button type="submit" class="btn-confirm">确认</button>
             </div>
-            <h2>验证主密码</h2>
-          </div>
-          <form id="authForm" class="auth-form">
-            <input type="password" id="authPassword" placeholder="输入主密码" autofocus>
-            <p class="auth-error" id="authError"></p>
-            <button type="submit" class="btn-primary">解锁</button>
           </form>
         </div>
       `;
 
-      const form = document.getElementById('authForm');
-      const passwordInput = document.getElementById('authPassword');
-      const errorText = document.getElementById('authError');
+      document.body.appendChild(modal);
+
+      const form = modal.querySelector('#passwordDialogForm');
+      const input = modal.querySelector('#dialogPassword');
+      const error = modal.querySelector('#dialogError');
+      const cancelBtn = modal.querySelector('#dialogCancel');
+
+      const close = (value) => {
+        modal.remove();
+        resolve(value);
+      };
+
+      cancelBtn.addEventListener('click', () => close(null));
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) close(null);
+      });
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const password = passwordInput.value;
+        const password = input.value;
         if (!password) return;
 
         try {
@@ -124,16 +140,18 @@ class TwoFAApp {
 
           if (isValid) {
             await sessionManager.createSession(password);
-            resolve(password);
+            close(password);
           } else {
-            errorText.textContent = '主密码错误';
-            passwordInput.value = '';
-            passwordInput.focus();
+            error.textContent = '主密码错误';
+            input.value = '';
+            input.focus();
           }
-        } catch (error) {
-          errorText.textContent = '验证失败';
+        } catch (err) {
+          error.textContent = '验证失败';
         }
       });
+
+      input.focus();
     });
   }
 
@@ -217,6 +235,7 @@ class TwoFAApp {
               const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, sessionKey);
               this.secrets = JSON.parse(decrypted);
             } else {
+              // 无会话，数据无法解密，显示空
               this.secrets = [];
             }
           } catch (error) {
@@ -238,9 +257,10 @@ class TwoFAApp {
    * 保存密钥到 storage（加密）
    */
   async saveSecrets() {
-    const sessionKey = await this.getSessionKey();
+    // 确保会话存在
+    const sessionKey = await this.ensureSession();
     if (!sessionKey) {
-      throw new Error('会话已过期');
+      throw new Error('需要验证主密码');
     }
 
     const json = JSON.stringify(this.secrets);
@@ -901,81 +921,11 @@ class TwoFAApp {
    * 验证密码（用于敏感操作）
    */
   async verifyPasswordForAction(actionName, callback) {
-    // 检查会话是否存在
-    let sessionKey = await sessionManager.getSessionKey();
+    // 确保会话存在
+    const sessionKey = await this.ensureSession();
     if (sessionKey) {
-      // 会话存在，直接执行
       await callback(sessionKey);
-      return;
     }
-
-    // 会话不存在，显示密码验证对话框
-    this.showPasswordVerifyModal(actionName, callback);
-  }
-
-  /**
-   * 显示密码验证对话框
-   */
-  showPasswordVerifyModal(actionName, callback) {
-    const modal = document.createElement('div');
-    modal.className = 'password-verify-modal';
-    modal.innerHTML = `
-      <div class="modal-overlay"></div>
-      <div class="modal-content">
-        <h3>验证主密码</h3>
-        <p>执行${actionName}需要验证主密码</p>
-        <form id="verifyForm">
-          <input type="password" id="verifyPassword" placeholder="输入主密码" autofocus>
-          <p class="error" id="verifyError"></p>
-          <div class="modal-actions">
-            <button type="button" class="btn-secondary" id="cancelVerify">取消</button>
-            <button type="submit" class="btn-primary">确认</button>
-          </div>
-        </form>
-      </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    const form = modal.querySelector('#verifyForm');
-    const input = modal.querySelector('#verifyPassword');
-    const error = modal.querySelector('#verifyError');
-    const cancelBtn = modal.querySelector('#cancelVerify');
-    const overlay = modal.querySelector('.modal-overlay');
-
-    const closeModal = () => modal.remove();
-
-    cancelBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', closeModal);
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const password = input.value;
-      if (!password) return;
-
-      try {
-        const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
-        const isValid = await CryptoUtils.verifyMasterPassword(
-          password,
-          result.masterPasswordHash,
-          result.masterPasswordSalt
-        );
-
-        if (isValid) {
-          await sessionManager.createSession(password);
-          modal.remove();
-          await callback(password);
-        } else {
-          error.textContent = '主密码错误';
-          input.value = '';
-          input.focus();
-        }
-      } catch (err) {
-        error.textContent = '验证失败';
-      }
-    });
-
-    input.focus();
   }
 
   /**
