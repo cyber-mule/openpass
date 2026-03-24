@@ -138,8 +138,41 @@ class ManagerApp {
       chrome.storage.local.set({
         secrets: this.secrets,
         sitesList: sitesList
-      }, resolve);
+      }, async () => {
+        // 数据变化后自动备份本地快照
+        await this.autoBackupOnChange();
+        resolve();
+      });
     });
+  }
+
+  /**
+   * 数据变化时自动备份
+   */
+  async autoBackupOnChange() {
+    const settings = await autoBackupManager.getSettings();
+
+    if (!settings.localSnapshot) {
+      return;
+    }
+
+    // 获取加密设置
+    const encryptionSettings = await backupManager.getEncryptionSettings();
+    let password = null;
+
+    if (encryptionSettings.enabled) {
+      if (encryptionSettings.useMasterPassword) {
+        password = await this.getSessionKey();
+      } else if (encryptionSettings.encryptedPassword) {
+        const sessionKey = await this.getSessionKey();
+        if (sessionKey) {
+          password = await CryptoUtils.decrypt(encryptionSettings.encryptedPassword, sessionKey);
+        }
+      }
+    }
+
+    // 触发备份（带防抖）
+    await autoBackupManager.triggerChangeBackup(this.secrets, { password });
   }
 
   /**

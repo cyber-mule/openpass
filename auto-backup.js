@@ -7,6 +7,38 @@ class AutoBackupManager {
   constructor() {
     this.alarmName = 'openpass-auto-backup';
     this.maxSnapshots = 5;
+    this.debounceTimer = null;
+    this.debounceDelay = 3000; // 3 秒防抖
+  }
+
+  /**
+   * 数据变化时触发备份（带防抖）
+   */
+  async triggerChangeBackup(secrets, options = {}) {
+    // 清除之前的定时器
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+
+    // 设置新的定时器
+    return new Promise((resolve) => {
+      this.debounceTimer = setTimeout(async () => {
+        const settings = await this.getSettings();
+
+        // 只保存本地快照，不写目录（避免频繁写入）
+        if (settings.localSnapshot) {
+          const backupData = await backupManager.createBackup(secrets, {
+            password: options.password
+          });
+
+          const snapshots = await this.saveSnapshot(backupData);
+          console.log('OpenPass: 数据变化，已自动备份快照');
+          resolve({ snapshot: { success: true, count: snapshots.length } });
+        } else {
+          resolve({ snapshot: null });
+        }
+      }, this.debounceDelay);
+    });
   }
 
   /**
