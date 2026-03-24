@@ -747,9 +747,14 @@ class ManagerApp {
     // 自动备份设置
     this.initAutoBackupSettings();
 
-    // 清除所有数据
-    document.getElementById('clearAllDataBtn').addEventListener('click', () => {
-      this.showClearDataDialog();
+    // 清空密钥
+    document.getElementById('clearSecretsBtn').addEventListener('click', () => {
+      this.showClearSecretsDialog();
+    });
+
+    // 重置所有数据
+    document.getElementById('resetAllDataBtn').addEventListener('click', () => {
+      this.showResetDataDialog();
     });
   }
 
@@ -1572,9 +1577,9 @@ class ManagerApp {
   }
 
   /**
-   * 显示清除数据确认对话框
+   * 显示清空密钥确认对话框
    */
-  showClearDataDialog() {
+  showClearSecretsDialog() {
     // 创建对话框
     const dialog = document.createElement('div');
     dialog.className = 'confirm-dialog';
@@ -1643,6 +1648,77 @@ class ManagerApp {
   }
 
   /**
+   * 显示重置数据确认对话框
+   */
+  showResetDataDialog() {
+    // 创建对话框
+    const dialog = document.createElement('div');
+    dialog.className = 'confirm-dialog';
+    dialog.innerHTML = `
+      <div class="confirm-dialog-content">
+        <h3 class="confirm-dialog-title">⚠️ 重置所有数据</h3>
+        <p class="confirm-dialog-message">
+          此操作将删除所有密钥、设置、主密码，恢复到初始状态。<br>
+          <strong>此操作不可撤销！</strong>
+        </p>
+        <div class="confirm-dialog-input">
+          <label>请输入 "RESET" 确认重置</label>
+          <input type="text" id="confirmResetInput" placeholder="输入 RESET">
+        </div>
+        <div class="confirm-dialog-actions">
+          <button class="btn-secondary" id="cancelResetBtn">取消</button>
+          <button class="btn-danger" id="confirmResetBtn" disabled>确认重置</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dialog);
+
+    const input = document.getElementById('confirmResetInput');
+    const confirmBtn = document.getElementById('confirmResetBtn');
+    const cancelBtn = document.getElementById('cancelResetBtn');
+
+    // 输入验证
+    input.addEventListener('input', () => {
+      confirmBtn.disabled = input.value !== 'RESET';
+    });
+
+    // 取消
+    cancelBtn.addEventListener('click', () => {
+      dialog.remove();
+    });
+
+    // 点击背景关闭
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) {
+        dialog.remove();
+      }
+    });
+
+    // 确认重置
+    confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = '重置中...';
+
+      try {
+        await this.resetAllData();
+        dialog.remove();
+        this.showToast('数据已重置', 'success');
+
+        // 刷新页面，重新开始引导
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } catch (error) {
+        console.error('重置数据失败:', error);
+        this.showToast('重置失败', 'error');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '确认重置';
+      }
+    });
+  }
+
+  /**
    * 清空所有密钥
    */
   async clearAllSecrets() {
@@ -1656,6 +1732,24 @@ class ManagerApp {
     ]);
 
     // 清除 IndexedDB 中的备份快照
+    return new Promise((resolve) => {
+      const request = indexedDB.deleteDatabase('OpenPassBackupDB');
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+    });
+  }
+
+  /**
+   * 重置所有数据
+   */
+  async resetAllData() {
+    // 清除 chrome.storage.local
+    await chrome.storage.local.clear();
+
+    // 清除 chrome.storage.session
+    await chrome.storage.session.clear();
+
+    // 清除 IndexedDB（目录句柄）
     return new Promise((resolve) => {
       const request = indexedDB.deleteDatabase('OpenPassBackupDB');
       request.onsuccess = () => resolve();
