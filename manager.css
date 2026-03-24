@@ -1010,6 +1010,147 @@ body {
   color: var(--text-color);
 }
 
+/* 欢迎引导模态框 */
+.welcome-modal {
+  max-width: 520px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.welcome-header {
+  text-align: center;
+  padding: 32px 32px 24px;
+  background: linear-gradient(135deg, var(--primary-color) 0%, #6366f1 100%);
+  color: white;
+}
+
+.welcome-icon {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 16px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcome-icon svg {
+  stroke: white;
+}
+
+.welcome-header h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.welcome-subtitle {
+  margin: 0;
+  opacity: 0.9;
+  font-size: 14px;
+}
+
+.welcome-steps {
+  padding: 24px 32px;
+}
+
+.welcome-step {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  margin-bottom: 12px;
+  background: var(--bg-secondary);
+  transition: all 0.2s;
+}
+
+.welcome-step:last-child {
+  margin-bottom: 0;
+}
+
+.welcome-step.completed {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.welcome-step.completed .step-number {
+  background: #22c55e;
+  color: white;
+}
+
+.welcome-step.completed .step-status {
+  color: #22c55e;
+}
+
+.step-number {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-content h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.step-content p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.step-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.step-action {
+  flex-shrink: 0;
+}
+
+.welcome-step.completed .step-action {
+  display: none;
+}
+
+.welcome-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 32px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.btn-text:hover {
+  background: var(--border-color);
+  color: var(--text-color);
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;

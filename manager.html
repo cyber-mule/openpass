@@ -561,6 +561,60 @@
   <!-- Toast -->
   <div id="toast" class="toast"></div>
 
+  <!-- 欢迎引导模态框 -->
+  <div id="welcomeModal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content welcome-modal">
+      <div class="welcome-header">
+        <div class="welcome-icon">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2>欢迎使用 OpenPass</h2>
+        <p class="welcome-subtitle">让我们完成一些基本设置，确保你的密钥安全</p>
+      </div>
+
+      <div class="welcome-steps">
+        <div class="welcome-step" data-step="1">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>设置主密码</h4>
+            <p>主密码用于保护你的密钥和敏感操作</p>
+            <span class="step-status" id="step1Status">未设置</span>
+          </div>
+          <button class="btn-secondary btn-sm step-action" id="setupPasswordBtn">设置</button>
+        </div>
+
+        <div class="welcome-step" data-step="2">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>添加第一个密钥</h4>
+            <p>添加你的第一个 TOTP 密钥开始使用</p>
+            <span class="step-status" id="step2Status">未添加</span>
+          </div>
+          <button class="btn-secondary btn-sm step-action" id="addFirstSecretBtn">添加</button>
+        </div>
+
+        <div class="welcome-step" data-step="3">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>配置自动备份</h4>
+            <p>启用自动备份，防止数据丢失</p>
+            <span class="step-status" id="step3Status">未配置</span>
+          </div>
+          <button class="btn-secondary btn-sm step-action" id="setupBackupBtn">配置</button>
+        </div>
+      </div>
+
+      <div class="welcome-footer">
+        <button id="skipWelcomeBtn" class="btn-text">跳过，稍后设置</button>
+        <button id="startUsingBtn" class="btn-primary" disabled>开始使用</button>
+      </div>
+    </div>
+  </div>
+
   <script src="crypto.js"></script>
   <script src="totp.js"></script>
   <script src="backup-manager.js"></script>

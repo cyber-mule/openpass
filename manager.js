@@ -45,6 +45,171 @@ class ManagerApp {
     this.bindEvents();
     this.renderSecretsTable();
     this.startTimers();
+
+    // 检查是否需要显示欢迎引导
+    await this.checkWelcomeGuide();
+  }
+
+  /**
+   * 检查是否需要显示欢迎引导
+   */
+  async checkWelcomeGuide() {
+    const result = await chrome.storage.local.get(['welcomeCompleted']);
+
+    if (result.welcomeCompleted) {
+      return;
+    }
+
+    // 检查各步骤状态
+    const settings = await chrome.storage.local.get([
+      'passwordHash',
+      'secrets',
+      'enableAutoBackup'
+    ]);
+
+    const hasPassword = !!settings.passwordHash;
+    const hasSecrets = settings.secrets && settings.secrets.length > 0;
+    const hasBackup = !!settings.enableAutoBackup;
+
+    // 如果都已完成，标记为已完成
+    if (hasPassword && hasSecrets && hasBackup) {
+      await chrome.storage.local.set({ welcomeCompleted: true });
+      return;
+    }
+
+    // 显示欢迎引导
+    this.showWelcomeGuide({ hasPassword, hasSecrets, hasBackup });
+  }
+
+  /**
+   * 显示欢迎引导
+   */
+  showWelcomeGuide(status) {
+    const modal = document.getElementById('welcomeModal');
+    const startUsingBtn = document.getElementById('startUsingBtn');
+
+    // 更新步骤状态
+    this.updateWelcomeStep(1, status.hasPassword);
+    this.updateWelcomeStep(2, status.hasSecrets);
+    this.updateWelcomeStep(3, status.hasBackup);
+
+    // 更新按钮状态
+    this.updateWelcomeButton();
+
+    // 显示模态框
+    modal.classList.remove('hidden');
+
+    // 绑定事件
+    this.bindWelcomeEvents();
+  }
+
+  /**
+   * 更新欢迎步骤状态
+   */
+  updateWelcomeStep(step, completed) {
+    const stepEl = document.querySelector(`.welcome-step[data-step="${step}"]`);
+    const statusEl = document.getElementById(`step${step}Status`);
+
+    if (completed) {
+      stepEl.classList.add('completed');
+      statusEl.textContent = '已完成';
+    } else {
+      stepEl.classList.remove('completed');
+      statusEl.textContent = step === 1 ? '未设置' : step === 2 ? '未添加' : '未配置';
+    }
+  }
+
+  /**
+   * 更新开始使用按钮状态
+   */
+  async updateWelcomeButton() {
+    const startUsingBtn = document.getElementById('startUsingBtn');
+    const result = await chrome.storage.local.get(['passwordHash', 'secrets']);
+    const hasPassword = !!result.passwordHash;
+    const hasSecrets = result.secrets && result.secrets.length > 0;
+
+    // 至少需要设置主密码才能开始使用
+    startUsingBtn.disabled = !hasPassword;
+  }
+
+  /**
+   * 绑定欢迎引导事件
+   */
+  bindWelcomeEvents() {
+    const modal = document.getElementById('welcomeModal');
+    const skipBtn = document.getElementById('skipWelcomeBtn');
+    const startBtn = document.getElementById('startUsingBtn');
+    const setupPasswordBtn = document.getElementById('setupPasswordBtn');
+    const addFirstSecretBtn = document.getElementById('addFirstSecretBtn');
+    const setupBackupBtn = document.getElementById('setupBackupBtn');
+
+    // 跳过
+    skipBtn.addEventListener('click', async () => {
+      await chrome.storage.local.set({ welcomeCompleted: true });
+      modal.classList.add('hidden');
+    });
+
+    // 开始使用
+    startBtn.addEventListener('click', async () => {
+      await chrome.storage.local.set({ welcomeCompleted: true });
+      modal.classList.add('hidden');
+    });
+
+    // 设置主密码
+    setupPasswordBtn.addEventListener('click', () => {
+      modal.classList.add('hidden');
+      this.showPasswordModal();
+    });
+
+    // 添加第一个密钥
+    addFirstSecretBtn.addEventListener('click', async () => {
+      modal.classList.add('hidden');
+      this.showSecretModal();
+    });
+
+    // 配置自动备份
+    setupBackupBtn.addEventListener('click', async () => {
+      modal.classList.add('hidden');
+      this.showPage('settings');
+      // 滚动到自动备份设置
+      setTimeout(() => {
+        const autoBackupSection = document.querySelector('.settings-section:nth-child(3)');
+        if (autoBackupSection) {
+          autoBackupSection.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+    });
+  }
+
+  /**
+   * 刷新欢迎引导状态
+   */
+  async refreshWelcomeStatus() {
+    const settings = await chrome.storage.local.get([
+      'passwordHash',
+      'secrets',
+      'enableAutoBackup'
+    ]);
+
+    const hasPassword = !!settings.passwordHash;
+    const hasSecrets = settings.secrets && settings.secrets.length > 0;
+    const hasBackup = !!settings.enableAutoBackup;
+
+    // 更新步骤状态
+    this.updateWelcomeStep(1, hasPassword);
+    this.updateWelcomeStep(2, hasSecrets);
+    this.updateWelcomeStep(3, hasBackup);
+
+    // 更新按钮状态
+    const startUsingBtn = document.getElementById('startUsingBtn');
+    if (startUsingBtn) {
+      startUsingBtn.disabled = !hasPassword;
+    }
+
+    // 如果都已完成，标记为已完成
+    if (hasPassword && hasSecrets && hasBackup) {
+      await chrome.storage.local.set({ welcomeCompleted: true });
+    }
   }
 
   /**
@@ -549,6 +714,9 @@ class ManagerApp {
 
       await autoBackupManager.saveSettings({ enabled });
       this.showToast(enabled ? '已启用自动备份' : '已禁用自动备份', 'success');
+
+      // 更新欢迎引导状态
+      await this.refreshWelcomeStatus();
     });
 
     // 备份频率
@@ -1035,6 +1203,9 @@ class ManagerApp {
     this.hideSecretModal();
     this.renderSecretsTable();
     this.showToast(id ? '密钥已更新' : '密钥已添加', 'success');
+
+    // 更新欢迎引导状态
+    await this.refreshWelcomeStatus();
   }
 
   /**
