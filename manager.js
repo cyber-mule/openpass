@@ -580,6 +580,13 @@ class ManagerApp {
 
     // 导入确认
     document.getElementById('confirmImportBtn').addEventListener('click', async () => {
+      const confirmBtn = document.getElementById('confirmImportBtn');
+
+      // 防止重复提交
+      if (confirmBtn.disabled) {
+        return;
+      }
+
       let importData = this.pendingImportData;
 
       // 如果是加密备份，先解密
@@ -591,31 +598,58 @@ class ManagerApp {
           return;
         }
 
-        const decryptedBackup = await backupManager.decryptBackup(this.pendingBackupData, password);
-        if (!decryptedBackup) {
-          document.getElementById('decryptError').textContent = '密码错误，解密失败';
+        // 显示加载状态
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '解密中...';
+
+        try {
+          const decryptedBackup = await backupManager.decryptBackup(this.pendingBackupData, password);
+          if (!decryptedBackup) {
+            document.getElementById('decryptError').textContent = '密码错误，解密失败';
+            document.getElementById('decryptError').style.display = 'block';
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '导入';
+            return;
+          }
+
+          // 检查版本兼容性并迁移
+          const compatibility = backupManager.checkCompatibility(decryptedBackup.appVersion || '0.0.0');
+          let data = decryptedBackup;
+          if (compatibility.level === 'warning') {
+            data = backupManager.migrateData(decryptedBackup);
+          }
+
+          importData = data.secrets;
+        } catch (error) {
+          document.getElementById('decryptError').textContent = '解密失败，请重试';
           document.getElementById('decryptError').style.display = 'block';
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = '导入';
           return;
         }
-
-        // 检查版本兼容性并迁移
-        const compatibility = backupManager.checkCompatibility(decryptedBackup.appVersion || '0.0.0');
-        let data = decryptedBackup;
-        if (compatibility.level === 'warning') {
-          data = backupManager.migrateData(decryptedBackup);
-        }
-
-        importData = data.secrets;
       }
 
-      if (!importData) return;
+      if (!importData) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '导入';
+        return;
+      }
 
-      const action = document.querySelector('input[name="duplicateAction"]:checked').value;
-      await this.importSecrets(importData, action);
-      this.pendingImportData = null;
-      this.pendingBackupData = null;
-      this.isEncryptedBackup = false;
-      document.getElementById('importModal').classList.add('hidden');
+      // 显示加载状态
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = '导入中...';
+
+      try {
+        const action = document.querySelector('input[name="duplicateAction"]:checked').value;
+        await this.importSecrets(importData, action);
+        this.pendingImportData = null;
+        this.pendingBackupData = null;
+        this.isEncryptedBackup = false;
+        document.getElementById('importModal').classList.add('hidden');
+      } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '导入';
+      }
     });
 
     document.getElementById('cancelImportBtn').addEventListener('click', () => {
