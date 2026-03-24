@@ -59,25 +59,32 @@ class AutoBackupManager {
    */
   calculateNextBackupTime(frequency) {
     const now = new Date();
-    const next = new Date(now);
+    const next = new Date();
+
+    // 先设置到今天凌晨 3 点
+    next.setHours(3, 0, 0, 0);
+
+    // 如果已经过了今天的 3 点，从明天开始算
+    if (now >= next) {
+      next.setDate(next.getDate() + 1);
+    }
 
     switch (frequency) {
       case 'daily':
-        next.setDate(next.getDate() + 1);
-        next.setHours(3, 0, 0, 0); // 凌晨 3 点
+        // 下一个凌晨 3 点（已计算）
         break;
       case 'weekly':
+        // 下周凌晨 3 点
         next.setDate(next.getDate() + 7);
-        next.setHours(3, 0, 0, 0);
         break;
       case 'monthly':
+        // 下月 1 号凌晨 3 点
         next.setMonth(next.getMonth() + 1);
         next.setDate(1);
-        next.setHours(3, 0, 0, 0);
         break;
     }
 
-    return next.toISOString();
+    return next;
   }
 
   /**
@@ -87,33 +94,39 @@ class AutoBackupManager {
     // 清除现有定时器
     await chrome.alarms.clear(this.alarmName);
 
+    // 计算下次备份时间
+    const nextTime = this.calculateNextBackupTime(frequency);
+    const now = new Date();
+
     // 计算延迟时间（分钟）
-    let delayMinutes;
+    const delayMinutes = Math.ceil((nextTime - now) / (1000 * 60));
+
+    // 计算周期时间（分钟）
+    let periodMinutes;
     switch (frequency) {
       case 'daily':
-        delayMinutes = 24 * 60; // 24 小时
+        periodMinutes = 24 * 60;
         break;
       case 'weekly':
-        delayMinutes = 7 * 24 * 60; // 7 天
+        periodMinutes = 7 * 24 * 60;
         break;
       case 'monthly':
-        delayMinutes = 30 * 24 * 60; // 30 天
+        periodMinutes = 30 * 24 * 60;
         break;
       default:
-        delayMinutes = 7 * 24 * 60;
+        periodMinutes = 7 * 24 * 60;
     }
 
     // 创建定时器
     chrome.alarms.create(this.alarmName, {
       delayInMinutes: delayMinutes,
-      periodInMinutes: delayMinutes
+      periodInMinutes: periodMinutes
     });
 
     // 保存下次备份时间
-    const nextTime = this.calculateNextBackupTime(frequency);
-    await this.saveSettings({ nextBackupTime: nextTime });
+    await this.saveSettings({ nextBackupTime: nextTime.toISOString() });
 
-    return nextTime;
+    return nextTime.toISOString();
   }
 
   /**
