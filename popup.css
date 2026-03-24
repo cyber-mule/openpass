@@ -944,6 +944,55 @@ body {
   flex-shrink: 0;
 }
 
+/* 解密区域 */
+.decrypt-section {
+  text-align: center;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+
+.decrypt-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--primary-color);
+  border-radius: 50%;
+  margin-bottom: 8px;
+}
+
+.decrypt-icon svg {
+  color: white;
+}
+
+.decrypt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: 2px;
+}
+
+.decrypt-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.decrypt-section .form-input {
+  text-align: center;
+  margin-bottom: 0;
+}
+
+.form-error {
+  color: var(--danger-color);
+  font-size: 11px;
+  margin-top: 4px;
+  text-align: left;
+}
+
 .modal-text {
   font-size: 13px;
   color: var(--text-secondary);

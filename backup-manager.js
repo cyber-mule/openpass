@@ -1,6 +1,6 @@
 /**
  * OpenPass - 备份管理模块
- * 处理备份导出、导入、版本兼容和数据迁移
+ * 处理备份导出、导入、版本兼容、加密和数据迁移
  */
 
 class BackupManager {
@@ -11,6 +11,12 @@ class BackupManager {
     this.formatVersion = 1;
     // 支持的最低次版本（用于向后兼容）
     this.minSupportedMinorVersion = -1; // 支持前一个次版本
+    // 加密算法
+    this.encryptionAlgorithm = 'AES-GCM';
+    this.keyLength = 256;
+    this.saltLength = 16;
+    this.ivLength = 12;
+    this.kdfIterations = 100000;
   }
 
   /**
@@ -19,6 +25,152 @@ class BackupManager {
   getAppVersion() {
     const manifest = chrome.runtime.getManifest();
     return manifest.version || '0.0.0';
+  }
+
+  /**
+   * 获取备份加密设置
+   */
+  async getEncryptionSettings() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([
+        'enableBackupEncryption',
+        'useMasterPasswordForBackup',
+        'encryptedBackupPassword'
+      ], (result) => {
+        resolve({
+          enabled: result.enableBackupEncryption || false,
+          useMasterPassword: result.useMasterPasswordForBackup !== false, // 默认使用主密码
+          encryptedPassword: result.encryptedBackupPassword || null
+        });
+      });
+    });
+  }
+
+  /**
+   * 保存备份加密设置
+   */
+  async saveEncryptionSettings(settings) {
+    return new Promise((resolve) => {
+      chrome.storage.local.set({
+        enableBackupEncryption: settings.enabled,
+        useMasterPasswordForBackup: settings.useMasterPassword,
+        encryptedBackupPassword: settings.encryptedPassword || null
+      }, resolve);
+    });
+  }
+
+  /**
+   * 从密码派生加密密钥
+   */
+  async deriveKey(password, salt) {
+    const encoder = new TextEncoder();
+    const passwordBuffer = encoder.encode(password);
+
+    const baseKey = await crypto.subtle.importKey(
+      'raw',
+      passwordBuffer,
+      'PBKDF2',
+      false,
+      ['deriveKey']
+    );
+
+    return crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: salt,
+        iterations: this.kdfIterations,
+        hash: 'SHA-256'
+      },
+      baseKey,
+      { name: this.encryptionAlgorithm, length: this.keyLength },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  /**
+   * 加密数据
+   */
+  async encryptData(data, password) {
+    const encoder = new TextEncoder();
+    const jsonData = JSON.stringify(data);
+
+    // 生成随机 salt 和 iv
+    const salt = crypto.getRandomValues(new Uint8Array(this.saltLength));
+    const iv = crypto.getRandomValues(new Uint8Array(this.ivLength));
+
+    // 派生密钥
+    const key = await this.deriveKey(password, salt);
+
+    // 加密
+    const encrypted = await crypto.subtle.encrypt(
+      { name: this.encryptionAlgorithm, iv: iv },
+      key,
+      encoder.encode(jsonData)
+    );
+
+    // 组合: salt + iv + encrypted
+    const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+    combined.set(salt, 0);
+    combined.set(iv, salt.length);
+    combined.set(new Uint8Array(encrypted), salt.length + iv.length);
+
+    // 转换为 Base64
+    return this.arrayBufferToBase64(combined.buffer);
+  }
+
+  /**
+   * 解密数据
+   */
+  async decryptData(encryptedBase64, password) {
+    try {
+      const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedBase64));
+
+      // 提取 salt, iv, encrypted
+      const salt = combined.slice(0, this.saltLength);
+      const iv = combined.slice(this.saltLength, this.saltLength + this.ivLength);
+      const encrypted = combined.slice(this.saltLength + this.ivLength);
+
+      // 派生密钥
+      const key = await this.deriveKey(password, salt);
+
+      // 解密
+      const decrypted = await crypto.subtle.decrypt(
+        { name: this.encryptionAlgorithm, iv: iv },
+        key,
+        encrypted
+      );
+
+      const decoder = new TextDecoder();
+      return JSON.parse(decoder.decode(decrypted));
+    } catch (error) {
+      console.error('解密失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * ArrayBuffer 转 Base64
+   */
+  arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  /**
+   * Base64 转 ArrayBuffer
+   */
+  base64ToArrayBuffer(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
   }
 
   /**
@@ -106,8 +258,9 @@ class BackupManager {
    * 创建备份数据
    * @param {Array} secrets - 密钥列表
    * @param {Object} options - 附加选项
+   * @param {string} options.password - 加密密码（可选）
    */
-  createBackup(secrets, options = {}) {
+  async createBackup(secrets, options = {}) {
     const backup = {
       // 备份格式信息
       format: 'openpass-backup',
@@ -119,30 +272,58 @@ class BackupManager {
       // 导出信息
       exportTime: new Date().toISOString(),
       exportPlatform: navigator.platform,
-      exportUserAgent: navigator.userAgent,
 
       // 数据统计
       count: secrets.length,
-      encrypted: options.encrypted || false,
-
-      // 密钥数据
-      secrets: secrets
+      encrypted: !!options.password
     };
 
-    // 如果有加密，添加加密信息
-    if (options.encrypted) {
-      backup.encryptionVersion = options.encryptionVersion || 1;
-      backup.kdf = options.kdf || 'PBKDF2';
-      backup.kdfIterations = options.kdfIterations || 100000;
+    if (options.password) {
+      // 加密模式：加密密钥数据
+      backup.encryptionVersion = 1;
+      backup.kdf = 'PBKDF2';
+      backup.kdfIterations = this.kdfIterations;
+
+      // 加密密钥数据
+      const encryptedData = await this.encryptData(secrets, options.password);
+      backup.encryptedData = encryptedData;
+    } else {
+      // 明文模式
+      backup.secrets = secrets;
     }
 
     return backup;
   }
 
   /**
+   * 解密备份数据
+   * @param {Object} backup - 加密的备份对象
+   * @param {string} password - 解密密码
+   * @returns {Object|null} - 解密后的备份对象
+   */
+  async decryptBackup(backup, password) {
+    if (!backup.encryptedData) {
+      return backup;
+    }
+
+    const decryptedSecrets = await this.decryptData(backup.encryptedData, password);
+    if (!decryptedSecrets) {
+      return null;
+    }
+
+    // 返回解密后的备份对象
+    return {
+      ...backup,
+      encrypted: false,
+      encryptedData: undefined,
+      secrets: decryptedSecrets
+    };
+  }
+
+  /**
    * 验证备份数据格式
    * @param {Object} data - 备份数据
-   * @returns {{valid: boolean, error?: string, data?: Object}}
+   * @returns {{valid: boolean, error?: string, data?: Object, encrypted?: boolean}}
    */
   validateBackup(data) {
     if (!data || typeof data !== 'object') {
@@ -155,6 +336,14 @@ class BackupManager {
       if (typeof data.formatVersion !== 'number') {
         return { valid: false, error: '缺少格式版本号' };
       }
+
+      // 检查是否加密
+      if (data.encrypted && data.encryptedData) {
+        // 加密备份，不需要验证 secrets
+        return { valid: true, data, encrypted: true };
+      }
+
+      // 明文备份，验证 secrets
       if (!Array.isArray(data.secrets)) {
         return { valid: false, error: '缺少密钥数据' };
       }
@@ -185,18 +374,20 @@ class BackupManager {
       return { valid: false, error: '无法识别的备份格式' };
     }
 
-    // 验证每个密钥
-    for (let i = 0; i < data.secrets.length; i++) {
-      const secret = data.secrets[i];
-      if (!secret.secret || !secret.site) {
-        return { valid: false, error: `第 ${i + 1} 个密钥数据不完整` };
-      }
-      if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') {
-        return { valid: false, error: `第 ${i + 1} 个密钥数据格式错误` };
+    // 验证每个密钥（仅明文备份）
+    if (data.secrets) {
+      for (let i = 0; i < data.secrets.length; i++) {
+        const secret = data.secrets[i];
+        if (!secret.secret || !secret.site) {
+          return { valid: false, error: `第 ${i + 1} 个密钥数据不完整` };
+        }
+        if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') {
+          return { valid: false, error: `第 ${i + 1} 个密钥数据格式错误` };
+        }
       }
     }
 
-    return { valid: true, data };
+    return { valid: true, data, encrypted: false };
   }
 
   /**

@@ -916,12 +916,17 @@ class TwoFAApp {
         }
         data = validationResult.data;
 
+        // 存储备份数据
+        this.pendingBackupData = data;
+        this.isEncryptedBackup = validationResult.encrypted;
+
         // 检查版本兼容性
         const compatibility = backupManager.checkCompatibility(data.appVersion || '0.0.0');
 
         // 显示备份信息
         const backupInfo = document.getElementById('backupInfo');
         const compatibilityWarning = document.getElementById('compatibilityWarning');
+        const decryptSection = document.getElementById('decryptSection');
 
         document.getElementById('backupAppVersion').textContent = `v${data.appVersion || '未知'}`;
         document.getElementById('backupExportTime').textContent = data.exportTime
@@ -940,16 +945,24 @@ class TwoFAApp {
           compatibilityWarning.style.display = 'none';
         }
 
-        // 如果需要迁移，先迁移数据
-        if (compatibility.level === 'warning') {
-          data = backupManager.migrateData(data);
+        // 处理加密备份
+        if (validationResult.encrypted) {
+          decryptSection.style.display = 'block';
+          document.getElementById('importCount').textContent = data.count || '?';
+          document.getElementById('decryptPassword').value = '';
+          document.getElementById('decryptError').style.display = 'none';
+        } else {
+          decryptSection.style.display = 'none';
+          // 如果需要迁移，先迁移数据
+          if (compatibility.level === 'warning') {
+            data = backupManager.migrateData(data);
+            this.pendingBackupData = data;
+          }
+          this.pendingImportData = data.secrets;
+          document.getElementById('importCount').textContent = this.pendingImportData.length;
         }
 
-        // 存储待导入数据
-        this.pendingImportData = data.secrets;
-
         // 显示恢复选项对话框
-        document.getElementById('importCount').textContent = this.pendingImportData.length;
         document.getElementById('currentCount').textContent = this.secrets.length;
         restoreModal.classList.remove('hidden');
 
@@ -964,20 +977,66 @@ class TwoFAApp {
 
     // 合并
     mergeBtn.addEventListener('click', async () => {
-      if (!this.pendingImportData) return;
+      let importData = this.pendingImportData;
 
-      await this.mergeSecrets(this.pendingImportData);
+      // 如果是加密备份，先解密
+      if (this.isEncryptedBackup) {
+        const password = document.getElementById('decryptPassword').value;
+        if (!password) {
+          document.getElementById('decryptError').textContent = '请输入备份密码';
+          document.getElementById('decryptError').style.display = 'block';
+          return;
+        }
+
+        const decryptedBackup = await backupManager.decryptBackup(this.pendingBackupData, password);
+        if (!decryptedBackup) {
+          document.getElementById('decryptError').textContent = '密码错误，解密失败';
+          document.getElementById('decryptError').style.display = 'block';
+          return;
+        }
+
+        importData = decryptedBackup.secrets;
+      }
+
+      if (!importData) return;
+
+      await this.mergeSecrets(importData);
       this.pendingImportData = null;
+      this.pendingBackupData = null;
+      this.isEncryptedBackup = false;
       restoreModal.classList.add('hidden');
     });
 
     // 覆盖
     overwriteBtn.addEventListener('click', async () => {
-      if (!this.pendingImportData) return;
+      let importData = this.pendingImportData;
+
+      // 如果是加密备份，先解密
+      if (this.isEncryptedBackup) {
+        const password = document.getElementById('decryptPassword').value;
+        if (!password) {
+          document.getElementById('decryptError').textContent = '请输入备份密码';
+          document.getElementById('decryptError').style.display = 'block';
+          return;
+        }
+
+        const decryptedBackup = await backupManager.decryptBackup(this.pendingBackupData, password);
+        if (!decryptedBackup) {
+          document.getElementById('decryptError').textContent = '密码错误，解密失败';
+          document.getElementById('decryptError').style.display = 'block';
+          return;
+        }
+
+        importData = decryptedBackup.secrets;
+      }
+
+      if (!importData) return;
 
       if (confirm('覆盖将删除所有现有密钥，确定继续吗？')) {
-        await this.overwriteSecrets(this.pendingImportData);
+        await this.overwriteSecrets(importData);
         this.pendingImportData = null;
+        this.pendingBackupData = null;
+        this.isEncryptedBackup = false;
         restoreModal.classList.add('hidden');
       }
     });
@@ -985,12 +1044,16 @@ class TwoFAApp {
     // 取消
     cancelRestoreBtn.addEventListener('click', () => {
       this.pendingImportData = null;
+      this.pendingBackupData = null;
+      this.isEncryptedBackup = false;
       restoreModal.classList.add('hidden');
     });
 
     // 点击遮罩关闭
     modalOverlay.addEventListener('click', () => {
       this.pendingImportData = null;
+      this.pendingBackupData = null;
+      this.isEncryptedBackup = false;
       restoreModal.classList.add('hidden');
     });
 
@@ -1055,16 +1118,29 @@ class TwoFAApp {
     }
 
     // 验证密码
-    await this.verifyPasswordForAction('导出', async () => {
+    await this.verifyPasswordForAction('导出', async (sessionKey) => {
+      // 获取加密设置
+      const encryptionSettings = await backupManager.getEncryptionSettings();
+      let password = null;
+
+      if (encryptionSettings.enabled) {
+        if (encryptionSettings.useMasterPassword) {
+          password = sessionKey;
+        } else if (encryptionSettings.encryptedPassword) {
+          password = await CryptoUtils.decrypt(encryptionSettings.encryptedPassword, sessionKey);
+        }
+      }
+
       // 使用备份管理器创建备份
-      const backupData = backupManager.createBackup(this.secrets);
+      const backupData = await backupManager.createBackup(this.secrets, { password });
 
       const json = JSON.stringify(backupData, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
 
       const timestamp = new Date().toISOString().slice(0, 10);
-      const filename = `openpass-backup-${timestamp}.json`;
+      const suffix = encryptionSettings.enabled ? '-encrypted' : '';
+      const filename = `openpass-backup-${timestamp}${suffix}.json`;
 
       const a = document.createElement('a');
       a.href = url;
@@ -1074,7 +1150,7 @@ class TwoFAApp {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+      this.showToast(`已导出 ${this.secrets.length} 个密钥${encryptionSettings.enabled ? '（已加密）' : ''}`, 'success');
     });
   }
 

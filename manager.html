@@ -210,6 +210,47 @@
               修改主密码
             </button>
           </div>
+
+          <div class="settings-section">
+            <h3>备份加密</h3>
+            <p class="settings-desc">启用后导出的备份文件将加密存储，导入时需要输入密码解密</p>
+
+            <div class="settings-item">
+              <div class="settings-item-info">
+                <span class="settings-item-label">启用备份加密</span>
+                <span class="settings-item-desc">导出备份时加密密钥数据</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="enableBackupEncryption">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div id="backupPasswordSettings" class="settings-subsection" style="display: none;">
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <span class="settings-item-label">使用主密码作为备份密码</span>
+                  <span class="settings-item-desc">启用后将使用主密码加密备份，无需单独记忆</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="useMasterPasswordForBackup" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div id="customBackupPasswordSection" style="display: none;">
+                <div class="form-group">
+                  <label for="backupPassword">备份密码</label>
+                  <input type="password" id="backupPassword" class="form-input" placeholder="输入备份密码">
+                </div>
+                <div class="form-group">
+                  <label for="backupPasswordConfirm">确认备份密码</label>
+                  <input type="password" id="backupPasswordConfirm" class="form-input" placeholder="再次输入备份密码">
+                </div>
+                <button id="saveBackupPasswordBtn" class="btn-secondary">保存备份密码</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -353,7 +394,24 @@
           </div>
         </div>
         <div id="compatibilityWarning" class="compatibility-warning" style="display: none;"></div>
-        <p>检测到备份文件包含 <strong id="importCount">0</strong> 个密钥。</p>
+
+        <!-- 解密密码输入 -->
+        <div id="decryptSection" class="decrypt-section" style="display: none;">
+          <div class="decrypt-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <p class="decrypt-title">此备份已加密</p>
+          <p class="decrypt-desc">请输入备份密码以解密数据</p>
+          <div class="form-group">
+            <input type="password" id="decryptPassword" class="form-input" placeholder="输入备份密码">
+            <p id="decryptError" class="form-error" style="display: none;"></p>
+          </div>
+        </div>
+
+        <p id="importCountText">检测到备份文件包含 <strong id="importCount">0</strong> 个密钥。</p>
         <p>当前已有 <strong id="currentCount">0</strong> 个密钥。</p>
         <p class="mt-4">发现重复站点时：</p>
         <div class="radio-group">

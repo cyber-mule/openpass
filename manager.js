@@ -220,12 +220,15 @@ class ManagerApp {
         }
         data = validationResult.data;
 
-        // 检查版本兼容性
-        const compatibility = backupManager.checkCompatibility(data.appVersion || '0.0.0');
+        // 存储备份数据供后续使用
+        this.pendingBackupData = data;
+        this.isEncryptedBackup = validationResult.encrypted;
 
         // 显示备份信息
         const backupInfo = document.getElementById('backupInfo');
         const compatibilityWarning = document.getElementById('compatibilityWarning');
+        const decryptSection = document.getElementById('decryptSection');
+        const importCountText = document.getElementById('importCountText');
 
         document.getElementById('backupAppVersion').textContent = `v${data.appVersion || '未知'}`;
         document.getElementById('backupExportTime').textContent = data.exportTime
@@ -233,7 +236,9 @@ class ManagerApp {
           : '-';
         backupInfo.style.display = 'block';
 
-        // 显示兼容性警告
+        // 检查版本兼容性
+        const compatibility = backupManager.checkCompatibility(data.appVersion || '0.0.0');
+
         if (compatibility.level === 'warning') {
           compatibilityWarning.textContent = compatibility.message;
           compatibilityWarning.style.display = 'block';
@@ -244,13 +249,25 @@ class ManagerApp {
           compatibilityWarning.style.display = 'none';
         }
 
-        // 如果需要迁移，先迁移数据
-        if (compatibility.level === 'warning') {
-          data = backupManager.migrateData(data);
+        // 处理加密备份
+        if (validationResult.encrypted) {
+          decryptSection.style.display = 'block';
+          importCountText.style.display = 'none';
+          document.getElementById('importCount').textContent = data.count || '?';
+          document.getElementById('decryptPassword').value = '';
+          document.getElementById('decryptError').style.display = 'none';
+        } else {
+          decryptSection.style.display = 'none';
+          importCountText.style.display = 'block';
+          // 如果需要迁移，先迁移数据
+          if (compatibility.level === 'warning') {
+            data = backupManager.migrateData(data);
+            this.pendingBackupData = data;
+          }
+          this.pendingImportData = data.secrets;
+          document.getElementById('importCount').textContent = this.pendingImportData.length;
         }
 
-        this.pendingImportData = data.secrets;
-        document.getElementById('importCount').textContent = this.pendingImportData.length;
         document.getElementById('currentCount').textContent = this.secrets.length;
         document.getElementById('importModal').classList.remove('hidden');
       } catch (err) {
@@ -263,21 +280,55 @@ class ManagerApp {
 
     // 导入确认
     document.getElementById('confirmImportBtn').addEventListener('click', async () => {
-      if (!this.pendingImportData) return;
+      let importData = this.pendingImportData;
+
+      // 如果是加密备份，先解密
+      if (this.isEncryptedBackup) {
+        const password = document.getElementById('decryptPassword').value;
+        if (!password) {
+          document.getElementById('decryptError').textContent = '请输入备份密码';
+          document.getElementById('decryptError').style.display = 'block';
+          return;
+        }
+
+        const decryptedBackup = await backupManager.decryptBackup(this.pendingBackupData, password);
+        if (!decryptedBackup) {
+          document.getElementById('decryptError').textContent = '密码错误，解密失败';
+          document.getElementById('decryptError').style.display = 'block';
+          return;
+        }
+
+        // 检查版本兼容性并迁移
+        const compatibility = backupManager.checkCompatibility(decryptedBackup.appVersion || '0.0.0');
+        let data = decryptedBackup;
+        if (compatibility.level === 'warning') {
+          data = backupManager.migrateData(decryptedBackup);
+        }
+
+        importData = data.secrets;
+      }
+
+      if (!importData) return;
 
       const action = document.querySelector('input[name="duplicateAction"]:checked').value;
-      await this.importSecrets(this.pendingImportData, action);
+      await this.importSecrets(importData, action);
       this.pendingImportData = null;
+      this.pendingBackupData = null;
+      this.isEncryptedBackup = false;
       document.getElementById('importModal').classList.add('hidden');
     });
 
     document.getElementById('cancelImportBtn').addEventListener('click', () => {
       this.pendingImportData = null;
+      this.pendingBackupData = null;
+      this.isEncryptedBackup = false;
       document.getElementById('importModal').classList.add('hidden');
     });
 
     document.querySelector('#importModal .modal-overlay').addEventListener('click', () => {
       this.pendingImportData = null;
+      this.pendingBackupData = null;
+      this.isEncryptedBackup = false;
       document.getElementById('importModal').classList.add('hidden');
     });
 
@@ -317,6 +368,98 @@ class ManagerApp {
       } else {
         error.textContent = '';
       }
+    });
+
+    // 备份加密设置
+    this.initBackupEncryptionSettings();
+  }
+
+  /**
+   * 初始化备份加密设置
+   */
+  async initBackupEncryptionSettings() {
+    const enableEncryption = document.getElementById('enableBackupEncryption');
+    const useMasterPassword = document.getElementById('useMasterPasswordForBackup');
+    const backupPasswordSettings = document.getElementById('backupPasswordSettings');
+    const customPasswordSection = document.getElementById('customBackupPasswordSection');
+    const saveBackupPasswordBtn = document.getElementById('saveBackupPasswordBtn');
+
+    // 加载当前设置
+    const settings = await backupManager.getEncryptionSettings();
+    enableEncryption.checked = settings.enabled;
+    useMasterPassword.checked = settings.useMasterPassword;
+
+    // 根据设置显示/隐藏子设置
+    backupPasswordSettings.style.display = settings.enabled ? 'block' : 'none';
+    customPasswordSection.style.display = settings.enabled && !settings.useMasterPassword ? 'block' : 'none';
+
+    // 启用/禁用加密
+    enableEncryption.addEventListener('change', async (e) => {
+      const enabled = e.target.checked;
+      backupPasswordSettings.style.display = enabled ? 'block' : 'none';
+      customPasswordSection.style.display = enabled && !useMasterPassword.checked ? 'block' : 'none';
+
+      await backupManager.saveEncryptionSettings({
+        enabled,
+        useMasterPassword: useMasterPassword.checked,
+        encryptedPassword: settings.encryptedPassword
+      });
+
+      this.showToast(enabled ? '已启用备份加密' : '已禁用备份加密', 'success');
+    });
+
+    // 使用主密码/自定义密码切换
+    useMasterPassword.addEventListener('change', async (e) => {
+      const useMaster = e.target.checked;
+      customPasswordSection.style.display = useMaster ? 'none' : 'block';
+
+      await backupManager.saveEncryptionSettings({
+        enabled: enableEncryption.checked,
+        useMasterPassword: useMaster,
+        encryptedPassword: settings.encryptedPassword
+      });
+
+      if (useMaster) {
+        this.showToast('将使用主密码加密备份', 'success');
+      }
+    });
+
+    // 保存自定义备份密码
+    saveBackupPasswordBtn.addEventListener('click', async () => {
+      const password = document.getElementById('backupPassword').value;
+      const confirmPassword = document.getElementById('backupPasswordConfirm').value;
+
+      if (!password || password.length < 6) {
+        this.showToast('密码至少需要 6 个字符', 'error');
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        this.showToast('两次输入的密码不一致', 'error');
+        return;
+      }
+
+      // 获取会话密钥来加密备份密码
+      const sessionKey = await this.getSessionKey();
+      if (!sessionKey) {
+        this.showToast('请先验证主密码', 'error');
+        return;
+      }
+
+      // 加密备份密码后存储
+      const encryptedPassword = await CryptoUtils.encrypt(password, sessionKey);
+
+      await backupManager.saveEncryptionSettings({
+        enabled: enableEncryption.checked,
+        useMasterPassword: false,
+        encryptedPassword: encryptedPassword
+      });
+
+      // 清空输入
+      document.getElementById('backupPassword').value = '';
+      document.getElementById('backupPasswordConfirm').value = '';
+
+      this.showToast('备份密码已保存', 'success');
     });
   }
 
@@ -579,23 +722,54 @@ class ManagerApp {
   }
 
   /**
-   * 导出密钥（明文，带版本号）
+   * 导出密钥
    */
-  exportSecrets() {
+  async exportSecrets() {
     if (this.secrets.length === 0) {
       this.showToast('没有可导出的密钥', 'error');
       return;
     }
 
-    // 使用备份管理器创建备份
-    const backupData = backupManager.createBackup(this.secrets);
+    // 获取加密设置
+    const encryptionSettings = await backupManager.getEncryptionSettings();
+    let password = null;
+
+    if (encryptionSettings.enabled) {
+      // 需要加密
+      if (encryptionSettings.useMasterPassword) {
+        // 使用主密码
+        const sessionKey = await this.getSessionKey();
+        if (!sessionKey) {
+          this.showToast('请先验证主密码', 'error');
+          return;
+        }
+        password = sessionKey;
+      } else {
+        // 使用自定义备份密码
+        if (!encryptionSettings.encryptedPassword) {
+          this.showToast('请先设置备份密码', 'error');
+          return;
+        }
+        // 解密存储的备份密码
+        const sessionKey = await this.getSessionKey();
+        if (!sessionKey) {
+          this.showToast('请先验证主密码', 'error');
+          return;
+        }
+        password = await CryptoUtils.decrypt(encryptionSettings.encryptedPassword, sessionKey);
+      }
+    }
+
+    // 创建备份
+    const backupData = await backupManager.createBackup(this.secrets, { password });
 
     const json = JSON.stringify(backupData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 
     const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `openpass-backup-${timestamp}.json`;
+    const suffix = encryptionSettings.enabled ? '-encrypted' : '';
+    const filename = `openpass-backup-${timestamp}${suffix}.json`;
 
     const a = document.createElement('a');
     a.href = url;
@@ -605,7 +779,15 @@ class ManagerApp {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this.showToast(`已导出 ${this.secrets.length} 个密钥`, 'success');
+    this.showToast(`已导出 ${this.secrets.length} 个密钥${encryptionSettings.enabled ? '（已加密）' : ''}`, 'success');
+  }
+
+  /**
+   * 获取会话密钥
+   */
+  async getSessionKey() {
+    const result = await chrome.storage.session.get(['sessionKey']);
+    return result.sessionKey || null;
   }
 
   /**
