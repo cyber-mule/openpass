@@ -42,6 +42,9 @@ class ManagerApp {
     // 设置活动监听
     this.setupActivityListener();
 
+    // 设置键盘快捷键
+    this.setupKeyboardShortcuts();
+
     await this.loadSecrets();
     this.loadVersionSignature();
     this.bindEvents();
@@ -377,6 +380,384 @@ class ManagerApp {
         }
       }
     });
+  }
+
+  /**
+   * 设置键盘快捷键
+   */
+  setupKeyboardShortcuts() {
+    // 当前选中的密钥索引
+    this.selectedSecretIndex = -1;
+
+    document.addEventListener('keydown', (e) => {
+      // 如果在输入框中，只处理 Escape
+      const isInputFocused = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+      const isModalOpen = this.isModalOpen();
+
+      // Escape - 关闭模态框或取消
+      if (e.key === 'Escape') {
+        this.handleEscapeKey();
+        return;
+      }
+
+      // 在输入框中时，跳过其他快捷键
+      if (isInputFocused) {
+        // 但处理 Tab 键的自定义行为
+        if (e.key === 'Enter' && !e.shiftKey) {
+          this.handleEnterInForm(e);
+        }
+        return;
+      }
+
+      // 模态框打开时，只处理特定快捷键
+      if (isModalOpen) {
+        if (e.key === 'Enter') {
+          this.handleEnterInModal(e);
+        }
+        return;
+      }
+
+      // 全局快捷键
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'n':
+            e.preventDefault();
+            this.showSecretModal();
+            break;
+          case 'f':
+            e.preventDefault();
+            this.focusSearch();
+            break;
+          case ',':
+            e.preventDefault();
+            this.showPage('settings');
+            break;
+        }
+        return;
+      }
+
+      // 单键快捷键
+      switch (e.key) {
+        case '/':
+          e.preventDefault();
+          this.focusSearch();
+          break;
+        case '?':
+          e.preventDefault();
+          this.showShortcutsHelp();
+          break;
+        case 'n':
+          e.preventDefault();
+          this.showSecretModal();
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          this.selectPreviousSecret();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          this.selectNextSecret();
+          break;
+        case 'Enter':
+          e.preventDefault();
+          this.copySelectedSecret();
+          break;
+        case 'e':
+          e.preventDefault();
+          this.editSelectedSecret();
+          break;
+        case 'Delete':
+        case 'Backspace':
+          e.preventDefault();
+          this.deleteSelectedSecret();
+          break;
+      }
+    });
+  }
+
+  /**
+   * 检查是否有模态框打开
+   */
+  isModalOpen() {
+    const modals = [
+      'secretModal',
+      'importModal',
+      'passwordModal',
+      'welcomeModal',
+      'shortcutsHelpModal'
+    ];
+
+    for (const id of modals) {
+      const modal = document.getElementById(id);
+      if (modal && !modal.classList.contains('hidden')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 处理 Escape 键
+   */
+  handleEscapeKey() {
+    // 按优先级关闭模态框
+    const modals = [
+      { id: 'shortcutsHelpModal', close: () => this.hideShortcutsHelp() },
+      { id: 'secretModal', close: () => this.hideSecretModal() },
+      { id: 'importModal', close: () => this.hideImportModal() },
+      { id: 'passwordModal', close: () => this.hidePasswordModal() },
+      { id: 'welcomeModal', close: () => {} } // 欢迎引导不能通过 Escape 关闭
+    ];
+
+    for (const modal of modals) {
+      const el = document.getElementById(modal.id);
+      if (el && !el.classList.contains('hidden') && modal.id !== 'welcomeModal') {
+        modal.close();
+        return;
+      }
+    }
+
+    // 清除选中状态
+    this.clearSecretSelection();
+  }
+
+  /**
+   * 处理表单中的 Enter 键
+   */
+  handleEnterInForm(e) {
+    const form = e.target.closest('form');
+    if (!form) return;
+
+    // 找到提交按钮
+    const submitBtn = form.querySelector('button[type="submit"]') ||
+                      form.querySelector('.btn-primary');
+    if (submitBtn && !submitBtn.disabled) {
+      e.preventDefault();
+      submitBtn.click();
+    }
+  }
+
+  /**
+   * 处理模态框中的 Enter 键
+   */
+  handleEnterInModal(e) {
+    // 找到当前模态框的主按钮
+    const activeModal = document.querySelector('.modal:not(.hidden), .confirm-dialog');
+    if (!activeModal) return;
+
+    const primaryBtn = activeModal.querySelector('.btn-primary, .btn-danger:not([disabled])');
+    if (primaryBtn && !primaryBtn.disabled) {
+      e.preventDefault();
+      primaryBtn.click();
+    }
+  }
+
+  /**
+   * 聚焦搜索框
+   */
+  focusSearch() {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.select();
+    }
+  }
+
+  /**
+   * 选择上一个密钥
+   */
+  selectPreviousSecret() {
+    if (this.secrets.length === 0) return;
+
+    this.selectedSecretIndex = Math.max(0, this.selectedSecretIndex - 1);
+    this.updateSecretSelection();
+  }
+
+  /**
+   * 选择下一个密钥
+   */
+  selectNextSecret() {
+    if (this.secrets.length === 0) return;
+
+    this.selectedSecretIndex = Math.min(this.secrets.length - 1, this.selectedSecretIndex + 1);
+    this.updateSecretSelection();
+  }
+
+  /**
+   * 更新密钥选中状态
+   */
+  updateSecretSelection() {
+    const rows = document.querySelectorAll('#secretsTableBody tr');
+
+    rows.forEach((row, index) => {
+      if (index === this.selectedSecretIndex) {
+        row.classList.add('selected');
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } else {
+        row.classList.remove('selected');
+      }
+    });
+  }
+
+  /**
+   * 清除密钥选中状态
+   */
+  clearSecretSelection() {
+    this.selectedSecretIndex = -1;
+    document.querySelectorAll('#secretsTableBody tr.selected').forEach(row => {
+      row.classList.remove('selected');
+    });
+  }
+
+  /**
+   * 复制选中密钥的验证码
+   */
+  async copySelectedSecret() {
+    if (this.selectedSecretIndex < 0 || this.selectedSecretIndex >= this.secrets.length) {
+      return;
+    }
+
+    const secret = this.secrets[this.selectedSecretIndex];
+    const code = this.codeData.get(secret.id);
+
+    if (code) {
+      await this.copyToClipboard(code);
+      this.showToast('验证码已复制', 'success');
+    }
+  }
+
+  /**
+   * 编辑选中密钥
+   */
+  editSelectedSecret() {
+    if (this.selectedSecretIndex < 0 || this.selectedSecretIndex >= this.secrets.length) {
+      return;
+    }
+
+    const secret = this.secrets[this.selectedSecretIndex];
+    this.showSecretModal(secret);
+  }
+
+  /**
+   * 删除选中密钥
+   */
+  deleteSelectedSecret() {
+    if (this.selectedSecretIndex < 0 || this.selectedSecretIndex >= this.secrets.length) {
+      return;
+    }
+
+    const secret = this.secrets[this.selectedSecretIndex];
+    if (confirm(`确定要删除 "${secret.name || secret.site}" 吗？`)) {
+      this.secrets = this.secrets.filter(s => s.id !== secret.id);
+      this.saveSecrets().catch(() => {});
+      this.renderSecretsTable();
+      this.selectedSecretIndex = -1;
+      this.showToast('密钥已删除');
+    }
+  }
+
+  /**
+   * 显示快捷键帮助
+   */
+  showShortcutsHelp() {
+    // 移除已有的帮助面板
+    this.hideShortcutsHelp();
+
+    const modal = document.createElement('div');
+    modal.id = 'shortcutsHelpModal';
+    modal.className = 'shortcuts-help-modal';
+    modal.innerHTML = `
+      <div class="shortcuts-help-content">
+        <div class="shortcuts-help-header">
+          <h3>键盘快捷键</h3>
+          <button class="shortcuts-close-btn" onclick="manager.hideShortcutsHelp()">×</button>
+        </div>
+        <div class="shortcuts-help-body">
+          <div class="shortcuts-section">
+            <h4>全局操作</h4>
+            <div class="shortcut-item">
+              <kbd>/</kbd> 或 <kbd>Ctrl+F</kbd>
+              <span>搜索密钥</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>N</kbd> 或 <kbd>Ctrl+N</kbd>
+              <span>添加密钥</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Ctrl+,</kbd>
+              <span>打开设置</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>?</kbd>
+              <span>显示帮助</span>
+            </div>
+          </div>
+          <div class="shortcuts-section">
+            <h4>列表操作</h4>
+            <div class="shortcut-item">
+              <kbd>↑</kbd> / <kbd>↓</kbd>
+              <span>选择上/下一条</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Enter</kbd>
+              <span>复制验证码</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>E</kbd>
+              <span>编辑密钥</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Delete</kbd>
+              <span>删除密钥</span>
+            </div>
+          </div>
+          <div class="shortcuts-section">
+            <h4>通用操作</h4>
+            <div class="shortcut-item">
+              <kbd>Enter</kbd>
+              <span>确认/提交</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Escape</kbd>
+              <span>取消/关闭</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Tab</kbd>
+              <span>切换字段</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // 点击背景关闭
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        this.hideShortcutsHelp();
+      }
+    });
+  }
+
+  /**
+   * 隐藏快捷键帮助
+   */
+  hideShortcutsHelp() {
+    const modal = document.getElementById('shortcutsHelpModal');
+    if (modal) {
+      modal.remove();
+    }
+  }
+
+  /**
+   * 隐藏导入模态框
+   */
+  hideImportModal() {
+    document.getElementById('importModal').classList.add('hidden');
+    this.pendingImportData = null;
+    this.pendingBackupData = null;
+    this.isEncryptedBackup = false;
   }
 
   /**
