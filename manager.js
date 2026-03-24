@@ -192,6 +192,21 @@ class ManagerApp {
       await this.handleWelcomeSetPassword();
     });
 
+    // 欢迎引导中按 Enter 提交
+    document.getElementById('welcomePassword').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('welcomePasswordConfirm').focus();
+      }
+    });
+
+    document.getElementById('welcomePasswordConfirm').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.handleWelcomeSetPassword();
+      }
+    });
+
     // 添加第一个密钥
     newAddFirstSecretBtn.addEventListener('click', async () => {
       modal.classList.add('hidden');
@@ -1076,6 +1091,14 @@ class ManagerApp {
       } finally {
         confirmBtn.disabled = false;
         confirmBtn.textContent = '导入';
+      }
+    });
+
+    // 解密密码输入框 Enter 提交
+    document.getElementById('decryptPassword').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('confirmImportBtn').click();
       }
     });
 
