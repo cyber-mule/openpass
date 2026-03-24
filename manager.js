@@ -59,14 +59,14 @@ class ManagerApp {
    */
   async checkGuideStatus() {
     const result = await chrome.storage.local.get([
-      'passwordHash',
+      'masterPasswordHash',
       'secrets',
       'enableAutoBackup',
       'welcomeCompleted'
     ]);
 
     return {
-      hasPassword: !!result.passwordHash,
+      hasPassword: !!result.masterPasswordHash,
       hasSecrets: result.secrets && result.secrets.length > 0,
       hasBackup: !!result.enableAutoBackup,
       welcomeCompleted: !!result.welcomeCompleted
@@ -165,10 +165,6 @@ class ManagerApp {
     newStartBtn.addEventListener('click', async () => {
       await chrome.storage.local.set({ welcomeCompleted: true });
       modal.classList.add('hidden');
-      // 如果还没有初始化，重新初始化
-      if (!this.isAuthenticated) {
-        window.location.reload();
-      }
     });
 
     // 设置主密码
@@ -223,14 +219,18 @@ class ManagerApp {
       // 创建密码哈希
       const { hash, salt } = await CryptoUtils.createMasterPasswordHash(password);
 
-      // 保存
+      // 保存（使用正确的 key）
       await chrome.storage.local.set({
-        passwordHash: hash,
-        passwordSalt: salt
+        masterPasswordHash: hash,
+        masterPasswordSalt: salt,
+        isSetupComplete: true
       });
 
       // 创建会话
       await sessionManager.createSession(password);
+
+      // 标记已认证
+      this.isAuthenticated = true;
 
       // 更新步骤状态
       this.updateWelcomeStep(1, true);
@@ -248,6 +248,16 @@ class ManagerApp {
       document.getElementById('welcomePasswordConfirm').value = '';
       errorEl.textContent = '';
 
+      // 初始化管理功能（如果还没有初始化）
+      if (!this.secrets.length) {
+        await this.loadSecrets();
+        this.loadVersionSignature();
+        this.bindEvents();
+        this.renderSecretsTable();
+        this.startTimers();
+        this.setupActivityListener();
+      }
+
       this.showToast('主密码设置成功', 'success');
     } catch (error) {
       console.error('设置主密码失败:', error);
@@ -260,12 +270,12 @@ class ManagerApp {
    */
   async refreshWelcomeStatus() {
     const settings = await chrome.storage.local.get([
-      'passwordHash',
+      'masterPasswordHash',
       'secrets',
       'enableAutoBackup'
     ]);
 
-    const hasPassword = !!settings.passwordHash;
+    const hasPassword = !!settings.masterPasswordHash;
     const hasSecrets = settings.secrets && settings.secrets.length > 0;
     const hasBackup = !!settings.enableAutoBackup;
 
