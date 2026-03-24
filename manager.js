@@ -86,18 +86,35 @@ class ManagerApp {
     this.updateWelcomeStep(2, status.hasSecrets);
     this.updateWelcomeStep(3, status.hasBackup);
 
-    // 如果已设置主密码，折叠步骤1，展开步骤2
-    if (status.hasPassword) {
-      document.getElementById('step1Body').classList.add('collapsed');
-      document.getElementById('step2Body').classList.remove('collapsed');
+    // 根据完成状态决定展开哪个步骤
+    const step1Body = document.getElementById('step1Body');
+    const step2Body = document.getElementById('step2Body');
+    const step3Body = document.getElementById('step3Body');
+
+    // 先折叠所有
+    step1Body.classList.add('collapsed');
+    step2Body.classList.add('collapsed');
+    step3Body.classList.add('collapsed');
+
+    if (!status.hasPassword) {
+      // 步骤1未完成，展开步骤1
+      step1Body.classList.remove('collapsed');
+      startUsingBtn.disabled = true;
+      skipBtn.style.display = 'none';
+    } else if (!status.hasSecrets) {
+      // 步骤1完成，步骤2未完成，展开步骤2
+      step2Body.classList.remove('collapsed');
+      startUsingBtn.disabled = false;
+      skipBtn.style.display = '';
+    } else if (!status.hasBackup) {
+      // 步骤1、2完成，步骤3未完成，展开步骤3
+      step3Body.classList.remove('collapsed');
       startUsingBtn.disabled = false;
       skipBtn.style.display = '';
     } else {
-      document.getElementById('step1Body').classList.remove('collapsed');
-      document.getElementById('step2Body').classList.add('collapsed');
-      document.getElementById('step3Body').classList.add('collapsed');
-      startUsingBtn.disabled = true;
-      skipBtn.style.display = 'none';
+      // 全部完成
+      startUsingBtn.disabled = false;
+      skipBtn.style.display = '';
     }
 
     // 显示模态框
@@ -288,7 +305,8 @@ class ManagerApp {
     const settings = await chrome.storage.local.get([
       'masterPasswordHash',
       'secrets',
-      'enableAutoBackup'
+      'enableAutoBackup',
+      'welcomeCompleted'
     ]);
 
     const hasPassword = !!settings.masterPasswordHash;
@@ -309,6 +327,34 @@ class ManagerApp {
     // 如果都已完成，标记为已完成
     if (hasPassword && hasSecrets && hasBackup) {
       await chrome.storage.local.set({ welcomeCompleted: true });
+      return;
+    }
+
+    // 如果引导未完成，更新 UI 并展开下一步
+    if (!settings.welcomeCompleted) {
+      const modal = document.getElementById('welcomeModal');
+      const step1Body = document.getElementById('step1Body');
+      const step2Body = document.getElementById('step2Body');
+      const step3Body = document.getElementById('step3Body');
+
+      // 折叠所有
+      step1Body?.classList.add('collapsed');
+      step2Body?.classList.add('collapsed');
+      step3Body?.classList.add('collapsed');
+
+      // 展开下一个未完成的步骤
+      if (!hasPassword) {
+        step1Body?.classList.remove('collapsed');
+      } else if (!hasSecrets) {
+        step2Body?.classList.remove('collapsed');
+      } else if (!hasBackup) {
+        step3Body?.classList.remove('collapsed');
+      }
+
+      // 如果模态框是隐藏的，重新显示
+      if (modal && modal.classList.contains('hidden')) {
+        modal.classList.remove('hidden');
+      }
     }
   }
 
