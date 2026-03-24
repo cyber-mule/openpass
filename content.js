@@ -55,11 +55,24 @@
    * 获取密钥
    */
   function fetchSecrets() {
-    chrome.storage.local.get(['secrets'], (result) => {
-      currentSecrets = result.secrets || [];
-      // 更新所有浮动按钮状态
-      updateAllButtons();
-    });
+    try {
+      chrome.storage.local.get(['secrets'], (result) => {
+        if (chrome.runtime.lastError) {
+          console.warn('OpenPass: 获取密钥失败', chrome.runtime.lastError);
+          return;
+        }
+        currentSecrets = result.secrets || [];
+        // 更新所有浮动按钮状态
+        updateAllButtons();
+      });
+    } catch (error) {
+      // Extension context invalidated
+      if (error.message.includes('Extension context invalidated')) {
+        console.warn('OpenPass: 扩展上下文已失效，请刷新页面');
+        return;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -238,15 +251,22 @@
     // 检查是否已有按钮
     if (floatingButtons.has(input)) return;
 
+    // 检查是否有匹配的密钥
+    const matches = getMatchingSecrets();
+    if (matches.length === 0) {
+      // 没有匹配的密钥，不创建按钮
+      return;
+    }
+
     const button = document.createElement('div');
-    button.className = 'openpass-float-btn';
+    button.className = 'openpass-float-btn openpass-has-secret';
     button.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
       </svg>
     `;
-    button.title = 'OpenPass - 填充验证码';
+    button.title = `OpenPass - 点击填充验证码 (${matches.length} 个密钥)`;
 
     // 点击事件
     button.addEventListener('click', (e) => {
@@ -260,7 +280,6 @@
     wrapper.appendChild(button);
 
     floatingButtons.set(input, { wrapper, button });
-    updateButtonState(button);
   }
 
   /**
@@ -311,6 +330,26 @@
   }
 
   /**
+   * 安全发送消息到扩展
+   */
+  async function safeSendMessage(message) {
+    try {
+      const response = await chrome.runtime.sendMessage(message);
+      if (chrome.runtime.lastError) {
+        throw new Error(chrome.runtime.lastError.message);
+      }
+      return response;
+    } catch (error) {
+      // Extension context invalidated
+      if (error.message && error.message.includes('Extension context invalidated')) {
+        showToast('扩展已更新，请刷新页面', 'warning');
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * 显示密钥选择列表
    */
   async function showSecretSelector(input, button, matches) {
@@ -329,16 +368,21 @@
     for (let i = 0; i < matches.length; i++) {
       const secret = matches[i];
       try {
-        const response = await chrome.runtime.sendMessage({
+        const response = await safeSendMessage({
           action: 'generateCode',
           secret: secret.secret,
           digits: secret.digits
         });
-        codesData.push({
-          index: i,
-          code: response.code,
-          remainingSeconds: response.remainingSeconds
-        });
+        if (response) {
+          codesData.push({
+            index: i,
+            code: response.code,
+            remainingSeconds: response.remainingSeconds
+          });
+        } else {
+          // 扩展上下文失效
+          return;
+        }
       } catch (error) {
         codesData.push({
           index: i,
@@ -458,15 +502,17 @@
         const codeValues = selector.querySelectorAll('.openpass-code-value');
         for (let i = 0; i < matches.length; i++) {
           try {
-            const response = await chrome.runtime.sendMessage({
+            const response = await safeSendMessage({
               action: 'generateCode',
               secret: matches[i].secret,
               digits: matches[i].digits
             });
-            codeValues[i].textContent = formatCode(response.code);
-            countdownElements[i].dataset.remaining = response.remainingSeconds;
-            countdownElements[i].textContent = response.remainingSeconds + 's';
-            countdownElements[i].classList.remove('openpass-countdown-urgent', 'openpass-countdown-warning');
+            if (response) {
+              codeValues[i].textContent = formatCode(response.code);
+              countdownElements[i].dataset.remaining = response.remainingSeconds;
+              countdownElements[i].textContent = response.remainingSeconds + 's';
+              countdownElements[i].classList.remove('openpass-countdown-urgent', 'openpass-countdown-warning');
+            }
           } catch (error) {
             console.error('刷新验证码失败:', error);
           }
@@ -485,7 +531,7 @@
    */
   async function doFillCode(input, button, secret) {
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await safeSendMessage({
         action: 'generateCode',
         secret: secret.secret,
         digits: secret.digits
@@ -512,14 +558,15 @@
   /**
    * 更新浮动按钮状态
    */
-  function updateButtonState(button) {
+  function updateButtonState(input, button) {
     const matches = getMatchingSecrets();
     if (matches.length > 0) {
       button.classList.add('openpass-has-secret');
       button.title = `OpenPass - 点击填充验证码 (${matches.length} 个密钥)`;
+      button.style.display = '';
     } else {
-      button.classList.remove('openpass-has-secret');
-      button.title = 'OpenPass - 未找到当前网站的密钥';
+      // 没有匹配的密钥，移除按钮
+      removeButton(input);
     }
   }
 
@@ -527,9 +574,12 @@
    * 更新所有按钮状态
    */
   function updateAllButtons() {
-    floatingButtons.forEach(({ button }) => {
-      updateButtonState(button);
+    floatingButtons.forEach(({ button }, input) => {
+      updateButtonState(input, button);
     });
+
+    // 重新检测输入框，可能需要为新匹配的创建按钮
+    detectInputs();
   }
 
   /**

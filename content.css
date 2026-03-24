@@ -116,6 +116,10 @@
   background: #ef4444 !important;
 }
 
+.openpass-toast.openpass-toast-warning {
+  background: #f59e0b !important;
+}
+
 /* 暗色模式适配 */
 @media (prefers-color-scheme: dark) {
   .openpass-float-btn {
