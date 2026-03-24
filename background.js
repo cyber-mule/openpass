@@ -378,9 +378,17 @@ async function updateBadgeForTab(tabId, url) {
  */
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'openpass-auto-backup') {
-    console.log('OpenPass: 执行自动备份...');
+    console.log('OpenPass: 检查是否需要自动备份...');
 
     try {
+      // 检查是否需要备份
+      const checkResult = await checkBackupNeeded();
+
+      if (!checkResult.needed) {
+        console.log('OpenPass: 尚未到备份时间');
+        return;
+      }
+
       // 检查是否启用自动备份
       const settings = await chrome.storage.local.get([
         'enableAutoBackup',
@@ -457,5 +465,79 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       console.error('OpenPass: 自动备份失败', error);
       showNotification('自动备份失败', error.message);
     }
+  }
+});
+
+/**
+ * 检查是否需要备份
+ */
+async function checkBackupNeeded() {
+  const settings = await chrome.storage.local.get([
+    'enableAutoBackup',
+    'backupFrequency',
+    'lastBackupTime'
+  ]);
+
+  if (!settings.enableAutoBackup) {
+    return { needed: false, reason: 'disabled' };
+  }
+
+  if (!settings.lastBackupTime) {
+    return { needed: true, reason: 'never' };
+  }
+
+  // 计算间隔
+  const intervals = {
+    daily: 24 * 60 * 60 * 1000,
+    weekly: 7 * 24 * 60 * 60 * 1000,
+    monthly: 30 * 24 * 60 * 60 * 1000
+  };
+
+  const interval = intervals[settings.backupFrequency] || intervals.weekly;
+  const lastBackup = new Date(settings.lastBackupTime);
+  const elapsed = Date.now() - lastBackup.getTime();
+
+  if (elapsed >= interval) {
+    return { needed: true, reason: 'overdue' };
+  }
+
+  return { needed: false, reason: 'not_due' };
+}
+
+/**
+ * 扩展启动时检查备份
+ */
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('OpenPass: 浏览器启动，检查备份状态...');
+
+  const checkResult = await checkBackupNeeded();
+
+  if (checkResult.needed) {
+    console.log('OpenPass: 需要备份，触发定时器');
+    // 触发备份检查（延迟 5 分钟，等待浏览器稳定）
+    chrome.alarms.create('openpass-auto-backup', {
+      delayInMinutes: 5
+    });
+  }
+});
+
+/**
+ * 扩展安装/更新时检查备份
+ */
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    // 新安装，不需要备份
+    return;
+  }
+
+  console.log('OpenPass: 扩展更新，检查备份状态...');
+
+  const checkResult = await checkBackupNeeded();
+
+  if (checkResult.needed) {
+    // 设置定时器
+    chrome.alarms.create('openpass-auto-backup', {
+      delayInMinutes: 5
+    });
   }
 });

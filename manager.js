@@ -496,8 +496,7 @@ class ManagerApp {
     directoryBackupSection.style.display = settings.directoryBackup ? 'block' : 'none';
 
     // 更新时间显示
-    lastBackupTime.textContent = autoBackupManager.formatTime(settings.lastBackupTime);
-    nextBackupTime.textContent = autoBackupManager.formatTime(settings.nextBackupTime);
+    this.updateBackupTimeDisplay(settings);
 
     // 更新目录和权限状态
     await this.updateDirectoryStatus();
@@ -509,8 +508,7 @@ class ManagerApp {
 
       if (enabled) {
         await autoBackupManager.setupAlarm(backupFrequency.value);
-        const newSettings = await autoBackupManager.getSettings();
-        nextBackupTime.textContent = autoBackupManager.formatTime(newSettings.nextBackupTime);
+        this.updateBackupTimeDisplay(await autoBackupManager.getSettings());
       } else {
         await autoBackupManager.clearAlarm();
         nextBackupTime.textContent = '-';
@@ -527,8 +525,7 @@ class ManagerApp {
 
       if (enableAutoBackup.checked) {
         await autoBackupManager.setupAlarm(frequency);
-        const newSettings = await autoBackupManager.getSettings();
-        nextBackupTime.textContent = autoBackupManager.formatTime(newSettings.nextBackupTime);
+        this.updateBackupTimeDisplay(await autoBackupManager.getSettings());
       }
     });
 
@@ -622,7 +619,7 @@ class ManagerApp {
       const results = await autoBackupManager.performBackup(this.secrets, { password });
 
       // 更新显示
-      lastBackupTime.textContent = autoBackupManager.formatTime(results.timestamp);
+      this.updateBackupTimeDisplay(await autoBackupManager.getSettings());
 
       // 显示结果
       const messages = [];
@@ -680,6 +677,72 @@ class ManagerApp {
         requestPermissionBtn.style.display = 'block';
         requestPermissionBtn.textContent = '重新选择';
         break;
+    }
+  }
+
+  /**
+   * 更新备份时间显示
+   */
+  updateBackupTimeDisplay(settings) {
+    const lastBackupTime = document.getElementById('lastBackupTime');
+    const nextBackupTime = document.getElementById('nextBackupTime');
+
+    // 上次备份时间
+    if (settings.lastBackupTime) {
+      const lastDate = new Date(settings.lastBackupTime);
+      const now = new Date();
+      const diffMs = now - lastDate;
+      const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+      const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+
+      if (diffDays > 0) {
+        lastBackupTime.textContent = `${diffDays} 天前`;
+      } else if (diffHours > 0) {
+        lastBackupTime.textContent = `${diffHours} 小时前`;
+      } else {
+        lastBackupTime.textContent = '刚刚';
+      }
+
+      lastBackupTime.title = lastDate.toLocaleString('zh-CN');
+    } else {
+      lastBackupTime.textContent = '从未备份';
+      lastBackupTime.title = '';
+    }
+
+    // 下次备份时间（基于间隔计算）
+    if (settings.enabled && settings.lastBackupTime) {
+      const interval = autoBackupManager.getBackupInterval(settings.frequency);
+      const lastDate = new Date(settings.lastBackupTime);
+      const nextDate = new Date(lastDate.getTime() + interval);
+      const now = new Date();
+
+      if (nextDate <= now) {
+        nextBackupTime.textContent = '待执行';
+        nextBackupTime.style.color = '#d97706';
+      } else {
+        const diffMs = nextDate - now;
+        const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+        const diffHours = Math.floor((diffMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+
+        if (diffDays > 0) {
+          nextBackupTime.textContent = `${diffDays} 天后`;
+        } else if (diffHours > 0) {
+          nextBackupTime.textContent = `${diffHours} 小时后`;
+        } else {
+          nextBackupTime.textContent = '即将';
+        }
+        nextBackupTime.style.color = '';
+      }
+
+      nextBackupTime.title = nextDate.toLocaleString('zh-CN');
+    } else if (settings.enabled) {
+      nextBackupTime.textContent = '待执行';
+      nextBackupTime.style.color = '#d97706';
+      nextBackupTime.title = '';
+    } else {
+      nextBackupTime.textContent = '-';
+      nextBackupTime.style.color = '';
+      nextBackupTime.title = '';
     }
   }
 

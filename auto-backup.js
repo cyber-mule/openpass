@@ -55,78 +55,70 @@ class AutoBackupManager {
   }
 
   /**
-   * 计算下次备份时间
+   * 获取备份间隔（毫秒）
    */
-  calculateNextBackupTime(frequency) {
-    const now = new Date();
-    const next = new Date();
-
-    // 先设置到今天凌晨 3 点
-    next.setHours(3, 0, 0, 0);
-
-    // 如果已经过了今天的 3 点，从明天开始算
-    if (now >= next) {
-      next.setDate(next.getDate() + 1);
-    }
-
+  getBackupInterval(frequency) {
     switch (frequency) {
       case 'daily':
-        // 下一个凌晨 3 点（已计算）
-        break;
+        return 24 * 60 * 60 * 1000; // 1 天
       case 'weekly':
-        // 下周凌晨 3 点
-        next.setDate(next.getDate() + 7);
-        break;
+        return 7 * 24 * 60 * 60 * 1000; // 7 天
       case 'monthly':
-        // 下月 1 号凌晨 3 点
-        next.setMonth(next.getMonth() + 1);
-        next.setDate(1);
-        break;
+        return 30 * 24 * 60 * 60 * 1000; // 30 天
+      default:
+        return 7 * 24 * 60 * 60 * 1000;
     }
-
-    return next;
   }
 
   /**
-   * 设置定时器
+   * 检查是否需要备份
+   */
+  async checkBackupNeeded() {
+    const settings = await this.getSettings();
+
+    if (!settings.enabled) {
+      return { needed: false, reason: 'disabled' };
+    }
+
+    if (!settings.lastBackupTime) {
+      return { needed: true, reason: 'never' };
+    }
+
+    const interval = this.getBackupInterval(settings.frequency);
+    const lastBackup = new Date(settings.lastBackupTime);
+    const now = new Date();
+    const elapsed = now - lastBackup;
+
+    if (elapsed >= interval) {
+      const daysOverdue = Math.floor((elapsed - interval) / (24 * 60 * 60 * 1000));
+      return {
+        needed: true,
+        reason: 'overdue',
+        lastBackup: settings.lastBackupTime,
+        daysOverdue
+      };
+    }
+
+    return {
+      needed: false,
+      reason: 'not_due',
+      lastBackup: settings.lastBackupTime,
+      nextBackup: new Date(lastBackup.getTime() + interval).toISOString()
+    };
+  }
+
+  /**
+   * 设置定时器（备用，浏览器持续运行时使用）
    */
   async setupAlarm(frequency) {
     // 清除现有定时器
     await chrome.alarms.clear(this.alarmName);
 
-    // 计算下次备份时间
-    const nextTime = this.calculateNextBackupTime(frequency);
-    const now = new Date();
-
-    // 计算延迟时间（分钟）
-    const delayMinutes = Math.ceil((nextTime - now) / (1000 * 60));
-
-    // 计算周期时间（分钟）
-    let periodMinutes;
-    switch (frequency) {
-      case 'daily':
-        periodMinutes = 24 * 60;
-        break;
-      case 'weekly':
-        periodMinutes = 7 * 24 * 60;
-        break;
-      case 'monthly':
-        periodMinutes = 30 * 24 * 60;
-        break;
-      default:
-        periodMinutes = 7 * 24 * 60;
-    }
-
-    // 创建定时器
+    // 设置一个较短的检查间隔（每小时检查一次）
     chrome.alarms.create(this.alarmName, {
-      delayInMinutes: delayMinutes,
-      periodInMinutes: periodMinutes
+      delayInMinutes: 60,
+      periodInMinutes: 60
     });
-
-    // 保存下次备份时间
-    await this.saveSettings({ nextBackupTime: nextTime.toISOString() });
-
-    return nextTime.toISOString();
   }
 
   /**
