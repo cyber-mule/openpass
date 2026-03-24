@@ -577,40 +577,66 @@
       </div>
 
       <div class="welcome-steps">
+        <!-- 步骤1：设置主密码 -->
         <div class="welcome-step" data-step="1">
-          <div class="step-number">1</div>
-          <div class="step-content">
-            <h4>设置主密码</h4>
-            <p>主密码用于保护你的密钥和敏感操作</p>
-            <span class="step-status" id="step1Status">未设置</span>
+          <div class="step-header">
+            <div class="step-number">1</div>
+            <div class="step-title">
+              <h4>设置主密码</h4>
+              <span class="step-status" id="step1Status">必填</span>
+            </div>
           </div>
-          <button class="btn-secondary btn-sm step-action" id="setupPasswordBtn">设置</button>
+          <div class="step-body" id="step1Body">
+            <p class="step-desc">主密码用于保护你的密钥和敏感操作，请务必牢记</p>
+            <div class="welcome-form">
+              <div class="form-group">
+                <label for="welcomePassword">主密码</label>
+                <input type="password" id="welcomePassword" class="form-input" placeholder="输入主密码" autocomplete="new-password">
+              </div>
+              <div class="form-group">
+                <label for="welcomePasswordConfirm">确认主密码</label>
+                <input type="password" id="welcomePasswordConfirm" class="form-input" placeholder="再次输入主密码" autocomplete="new-password">
+              </div>
+              <p id="welcomePasswordError" class="form-error"></p>
+              <button id="welcomeSetPasswordBtn" class="btn-primary">确认设置</button>
+            </div>
+          </div>
         </div>
 
+        <!-- 步骤2：添加密钥 -->
         <div class="welcome-step" data-step="2">
-          <div class="step-number">2</div>
-          <div class="step-content">
-            <h4>添加第一个密钥</h4>
-            <p>添加你的第一个 TOTP 密钥开始使用</p>
-            <span class="step-status" id="step2Status">未添加</span>
+          <div class="step-header">
+            <div class="step-number">2</div>
+            <div class="step-title">
+              <h4>添加第一个密钥</h4>
+              <span class="step-status" id="step2Status">推荐</span>
+            </div>
           </div>
-          <button class="btn-secondary btn-sm step-action" id="addFirstSecretBtn">添加</button>
+          <div class="step-body collapsed" id="step2Body">
+            <p class="step-desc">添加你的第一个 TOTP 密钥开始使用</p>
+            <button id="addFirstSecretBtn" class="btn-secondary">添加密钥</button>
+          </div>
         </div>
 
+        <!-- 步骤3：配置备份 -->
         <div class="welcome-step" data-step="3">
-          <div class="step-number">3</div>
-          <div class="step-content">
-            <h4>配置自动备份</h4>
-            <p>启用自动备份，防止数据丢失</p>
-            <span class="step-status" id="step3Status">未配置</span>
+          <div class="step-header">
+            <div class="step-number">3</div>
+            <div class="step-title">
+              <h4>配置自动备份</h4>
+              <span class="step-status" id="step3Status">推荐</span>
+            </div>
           </div>
-          <button class="btn-secondary btn-sm step-action" id="setupBackupBtn">配置</button>
+          <div class="step-body collapsed" id="step3Body">
+            <p class="step-desc">启用自动备份，防止数据丢失</p>
+            <button id="setupBackupBtn" class="btn-secondary">去配置</button>
+          </div>
         </div>
       </div>
 
       <div class="welcome-footer">
         <button id="skipWelcomeBtn" class="btn-text">跳过，稍后设置</button>
-        <button id="startUsingBtn" class="btn-primary" disabled>开始使用</button>
+        <button id="startUsingBtn" class="btn-primary">开始使用</button>
       </div>
     </div>
   </div>

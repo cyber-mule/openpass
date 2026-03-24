@@ -19,14 +19,16 @@ class ManagerApp {
   }
 
   async init() {
-    // 检查是否已设置主密码
-    const setupComplete = await this.checkSetup();
-    if (!setupComplete) {
-      window.location.href = 'setup.html';
+    // 检查是否已完成引导
+    const guideStatus = await this.checkGuideStatus();
+
+    if (!guideStatus.hasPassword) {
+      // 没有设置主密码，显示欢迎引导（步骤1：设置主密码）
+      this.showWelcomeGuide(guideStatus);
       return;
     }
 
-    // 检查会话
+    // 已设置主密码，检查会话
     if (!await sessionManager.isAuthenticated()) {
       window.location.href = 'auth.html?redirect=manager.html';
       return;
@@ -46,39 +48,29 @@ class ManagerApp {
     this.renderSecretsTable();
     this.startTimers();
 
-    // 检查是否需要显示欢迎引导
-    await this.checkWelcomeGuide();
+    // 检查是否需要显示欢迎引导（跳过步骤1）
+    if (!guideStatus.welcomeCompleted) {
+      this.showWelcomeGuide(guideStatus);
+    }
   }
 
   /**
-   * 检查是否需要显示欢迎引导
+   * 检查引导状态
    */
-  async checkWelcomeGuide() {
-    const result = await chrome.storage.local.get(['welcomeCompleted']);
-
-    if (result.welcomeCompleted) {
-      return;
-    }
-
-    // 检查各步骤状态
-    const settings = await chrome.storage.local.get([
+  async checkGuideStatus() {
+    const result = await chrome.storage.local.get([
       'passwordHash',
       'secrets',
-      'enableAutoBackup'
+      'enableAutoBackup',
+      'welcomeCompleted'
     ]);
 
-    const hasPassword = !!settings.passwordHash;
-    const hasSecrets = settings.secrets && settings.secrets.length > 0;
-    const hasBackup = !!settings.enableAutoBackup;
-
-    // 如果都已完成，标记为已完成
-    if (hasPassword && hasSecrets && hasBackup) {
-      await chrome.storage.local.set({ welcomeCompleted: true });
-      return;
-    }
-
-    // 显示欢迎引导
-    this.showWelcomeGuide({ hasPassword, hasSecrets, hasBackup });
+    return {
+      hasPassword: !!result.passwordHash,
+      hasSecrets: result.secrets && result.secrets.length > 0,
+      hasBackup: !!result.enableAutoBackup,
+      welcomeCompleted: !!result.welcomeCompleted
+    };
   }
 
   /**
@@ -87,14 +79,26 @@ class ManagerApp {
   showWelcomeGuide(status) {
     const modal = document.getElementById('welcomeModal');
     const startUsingBtn = document.getElementById('startUsingBtn');
+    const skipBtn = document.getElementById('skipWelcomeBtn');
 
     // 更新步骤状态
     this.updateWelcomeStep(1, status.hasPassword);
     this.updateWelcomeStep(2, status.hasSecrets);
     this.updateWelcomeStep(3, status.hasBackup);
 
-    // 更新按钮状态
-    this.updateWelcomeButton();
+    // 如果已设置主密码，折叠步骤1，展开步骤2
+    if (status.hasPassword) {
+      document.getElementById('step1Body').classList.add('collapsed');
+      document.getElementById('step2Body').classList.remove('collapsed');
+      startUsingBtn.disabled = false;
+      skipBtn.style.display = '';
+    } else {
+      document.getElementById('step1Body').classList.remove('collapsed');
+      document.getElementById('step2Body').classList.add('collapsed');
+      document.getElementById('step3Body').classList.add('collapsed');
+      startUsingBtn.disabled = true;
+      skipBtn.style.display = 'none';
+    }
 
     // 显示模态框
     modal.classList.remove('hidden');
@@ -109,27 +113,23 @@ class ManagerApp {
   updateWelcomeStep(step, completed) {
     const stepEl = document.querySelector(`.welcome-step[data-step="${step}"]`);
     const statusEl = document.getElementById(`step${step}Status`);
+    const bodyEl = document.getElementById(`step${step}Body`);
 
     if (completed) {
       stepEl.classList.add('completed');
       statusEl.textContent = '已完成';
+      statusEl.classList.remove('required');
+      if (bodyEl) bodyEl.classList.add('collapsed');
     } else {
       stepEl.classList.remove('completed');
-      statusEl.textContent = step === 1 ? '未设置' : step === 2 ? '未添加' : '未配置';
+      if (step === 1) {
+        statusEl.textContent = '必填';
+        statusEl.classList.add('required');
+      } else {
+        statusEl.textContent = '推荐';
+        statusEl.classList.remove('required');
+      }
     }
-  }
-
-  /**
-   * 更新开始使用按钮状态
-   */
-  async updateWelcomeButton() {
-    const startUsingBtn = document.getElementById('startUsingBtn');
-    const result = await chrome.storage.local.get(['passwordHash', 'secrets']);
-    const hasPassword = !!result.passwordHash;
-    const hasSecrets = result.secrets && result.secrets.length > 0;
-
-    // 至少需要设置主密码才能开始使用
-    startUsingBtn.disabled = !hasPassword;
   }
 
   /**
@@ -139,39 +139,53 @@ class ManagerApp {
     const modal = document.getElementById('welcomeModal');
     const skipBtn = document.getElementById('skipWelcomeBtn');
     const startBtn = document.getElementById('startUsingBtn');
-    const setupPasswordBtn = document.getElementById('setupPasswordBtn');
+    const welcomeSetPasswordBtn = document.getElementById('welcomeSetPasswordBtn');
     const addFirstSecretBtn = document.getElementById('addFirstSecretBtn');
     const setupBackupBtn = document.getElementById('setupBackupBtn');
 
+    // 清除旧的事件监听器
+    const newSkipBtn = skipBtn.cloneNode(true);
+    skipBtn.parentNode.replaceChild(newSkipBtn, skipBtn);
+    const newStartBtn = startBtn.cloneNode(true);
+    startBtn.parentNode.replaceChild(newStartBtn, startBtn);
+    const newWelcomeSetPasswordBtn = welcomeSetPasswordBtn.cloneNode(true);
+    welcomeSetPasswordBtn.parentNode.replaceChild(newWelcomeSetPasswordBtn, welcomeSetPasswordBtn);
+    const newAddFirstSecretBtn = addFirstSecretBtn.cloneNode(true);
+    addFirstSecretBtn.parentNode.replaceChild(newAddFirstSecretBtn, addFirstSecretBtn);
+    const newSetupBackupBtn = setupBackupBtn.cloneNode(true);
+    setupBackupBtn.parentNode.replaceChild(newSetupBackupBtn, setupBackupBtn);
+
     // 跳过
-    skipBtn.addEventListener('click', async () => {
+    newSkipBtn.addEventListener('click', async () => {
       await chrome.storage.local.set({ welcomeCompleted: true });
       modal.classList.add('hidden');
     });
 
     // 开始使用
-    startBtn.addEventListener('click', async () => {
+    newStartBtn.addEventListener('click', async () => {
       await chrome.storage.local.set({ welcomeCompleted: true });
       modal.classList.add('hidden');
+      // 如果还没有初始化，重新初始化
+      if (!this.isAuthenticated) {
+        window.location.reload();
+      }
     });
 
     // 设置主密码
-    setupPasswordBtn.addEventListener('click', () => {
-      modal.classList.add('hidden');
-      this.showPasswordModal();
+    newWelcomeSetPasswordBtn.addEventListener('click', async () => {
+      await this.handleWelcomeSetPassword();
     });
 
     // 添加第一个密钥
-    addFirstSecretBtn.addEventListener('click', async () => {
+    newAddFirstSecretBtn.addEventListener('click', async () => {
       modal.classList.add('hidden');
       this.showSecretModal();
     });
 
     // 配置自动备份
-    setupBackupBtn.addEventListener('click', async () => {
+    newSetupBackupBtn.addEventListener('click', async () => {
       modal.classList.add('hidden');
       this.showPage('settings');
-      // 滚动到自动备份设置
       setTimeout(() => {
         const autoBackupSection = document.querySelector('.settings-section:nth-child(3)');
         if (autoBackupSection) {
@@ -179,6 +193,66 @@ class ManagerApp {
         }
       }, 100);
     });
+  }
+
+  /**
+   * 处理欢迎引导中设置主密码
+   */
+  async handleWelcomeSetPassword() {
+    const password = document.getElementById('welcomePassword').value;
+    const confirmPassword = document.getElementById('welcomePasswordConfirm').value;
+    const errorEl = document.getElementById('welcomePasswordError');
+
+    // 验证
+    if (!password) {
+      errorEl.textContent = '请输入主密码';
+      return;
+    }
+
+    if (password.length < 6) {
+      errorEl.textContent = '密码至少需要 6 个字符';
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      errorEl.textContent = '两次输入的密码不一致';
+      return;
+    }
+
+    try {
+      // 创建密码哈希
+      const { hash, salt } = await CryptoUtils.createMasterPasswordHash(password);
+
+      // 保存
+      await chrome.storage.local.set({
+        passwordHash: hash,
+        passwordSalt: salt
+      });
+
+      // 创建会话
+      await sessionManager.createSession(password);
+
+      // 更新步骤状态
+      this.updateWelcomeStep(1, true);
+
+      // 展开步骤2
+      document.getElementById('step1Body').classList.add('collapsed');
+      document.getElementById('step2Body').classList.remove('collapsed');
+
+      // 启用开始使用按钮
+      document.getElementById('startUsingBtn').disabled = false;
+      document.getElementById('skipWelcomeBtn').style.display = '';
+
+      // 清空表单
+      document.getElementById('welcomePassword').value = '';
+      document.getElementById('welcomePasswordConfirm').value = '';
+      errorEl.textContent = '';
+
+      this.showToast('主密码设置成功', 'success');
+    } catch (error) {
+      console.error('设置主密码失败:', error);
+      errorEl.textContent = '设置失败，请重试';
+    }
   }
 
   /**

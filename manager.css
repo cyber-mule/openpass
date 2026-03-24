@@ -1053,17 +1053,15 @@ body {
 
 .welcome-steps {
   padding: 24px 32px;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .welcome-step {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px;
   border-radius: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
   background: var(--bg-secondary);
-  transition: all 0.2s;
+  overflow: hidden;
 }
 
 .welcome-step:last-child {
@@ -1083,34 +1081,44 @@ body {
   color: #22c55e;
 }
 
+.welcome-step.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  cursor: pointer;
+}
+
 .step-number {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--border-color);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-secondary);
   flex-shrink: 0;
 }
 
-.step-content {
+.step-title {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.step-content h4 {
-  margin: 0 0 4px;
+.step-title h4 {
+  margin: 0;
   font-size: 14px;
   font-weight: 600;
-}
-
-.step-content p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .step-status {
@@ -1118,12 +1126,72 @@ body {
   color: var(--text-secondary);
 }
 
-.step-action {
-  flex-shrink: 0;
+.step-status.required {
+  color: #ef4444;
 }
 
-.welcome-step.completed .step-action {
+.step-body {
+  padding: 0 16px 16px;
+}
+
+.step-body.collapsed {
   display: none;
+}
+
+.step-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.welcome-form {
+  background: var(--bg-color);
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.welcome-form .form-group {
+  margin-bottom: 12px;
+}
+
+.welcome-form .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.welcome-form label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-color);
+}
+
+.welcome-form .form-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  transition: border-color 0.2s;
+}
+
+.welcome-form .form-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.welcome-form .form-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 8px;
+  min-height: 16px;
+}
+
+.welcome-form .btn-primary {
+  width: 100%;
+  margin-top: 12px;
 }
 
 .welcome-footer {
