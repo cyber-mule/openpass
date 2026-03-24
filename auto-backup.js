@@ -192,14 +192,10 @@ class AutoBackupManager {
         id: 'openpass-backup-dir'
       });
 
-      // 存储目录句柄（需要序列化）
-      const serializedHandle = await this.serializeHandle(handle);
+      // 存储目录句柄
+      await this.saveHandle(handle);
 
-      await this.saveSettings({
-        directoryHandle: serializedHandle
-      });
-
-      return { success: true, name: handle.name };
+      return { success: true, name: handle.name, handle };
     } catch (error) {
       if (error.name === 'AbortError') {
         return { success: false, error: '已取消选择' };
@@ -209,10 +205,9 @@ class AutoBackupManager {
   }
 
   /**
-   * 序列化目录句柄
+   * 存储目录句柄到 IndexedDB
    */
-  async serializeHandle(handle) {
-    // 存储在 IndexedDB 中以便持久化
+  async saveHandle(handle) {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open('OpenPassBackupDB', 1);
 
@@ -232,9 +227,7 @@ class AutoBackupManager {
 
         store.put(handle, 'backupDirectory');
 
-        transaction.oncomplete = () => {
-          resolve(handle.name);
-        };
+        transaction.oncomplete = () => resolve(handle.name);
         transaction.onerror = () => reject(transaction.error);
       };
     });
@@ -244,7 +237,7 @@ class AutoBackupManager {
    * 获取存储的目录句柄
    */
   async getStoredHandle() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const request = indexedDB.open('OpenPassBackupDB', 1);
 
       request.onerror = () => resolve(null);
@@ -274,23 +267,91 @@ class AutoBackupManager {
   }
 
   /**
+   * 检查目录权限状态
+   * @returns {'granted'|'denied'|'prompt'|'no-handle'}
+   */
+  async checkPermissionStatus() {
+    const handle = await this.getStoredHandle();
+
+    if (!handle) {
+      return 'no-handle';
+    }
+
+    try {
+      const permission = await handle.queryPermission({ mode: 'readwrite' });
+      return permission; // 'granted', 'denied', 'prompt'
+    } catch (error) {
+      console.error('检查权限失败:', error);
+      return 'denied';
+    }
+  }
+
+  /**
+   * 请求目录权限
+   */
+  async requestPermission() {
+    const handle = await this.getStoredHandle();
+
+    if (!handle) {
+      return { success: false, error: '未选择备份目录' };
+    }
+
+    try {
+      const permission = await handle.requestPermission({ mode: 'readwrite' });
+      return { success: permission === 'granted', permission };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * 获取目录信息和权限状态
+   */
+  async getDirectoryInfo() {
+    const handle = await this.getStoredHandle();
+
+    if (!handle) {
+      return {
+        hasHandle: false,
+        name: null,
+        permission: 'no-handle'
+      };
+    }
+
+    const permission = await this.checkPermissionStatus();
+
+    return {
+      hasHandle: true,
+      name: handle.name,
+      permission
+    };
+  }
+
+  /**
    * 写入备份文件到目录
    */
-  async writeToDirectory(backupData, directoryHandle) {
+  async writeToDirectory(backupData) {
     try {
-      const handle = directoryHandle || await this.getStoredHandle();
+      const handle = await this.getStoredHandle();
 
       if (!handle) {
-        return { success: false, error: '未选择备份目录' };
+        return { success: false, error: '未选择备份目录', needAuth: false };
       }
 
-      // 验证权限
-      const permission = await handle.queryPermission({ mode: 'readwrite' });
+      // 检查权限
+      let permission = await handle.queryPermission({ mode: 'readwrite' });
+
+      if (permission === 'prompt') {
+        // 尝试请求权限
+        permission = await handle.requestPermission({ mode: 'readwrite' });
+      }
+
       if (permission !== 'granted') {
-        const requestPermission = await handle.requestPermission({ mode: 'readwrite' });
-        if (requestPermission !== 'granted') {
-          return { success: false, error: '没有写入权限' };
-        }
+        return {
+          success: false,
+          error: permission === 'denied' ? '权限被拒绝，请在设置中重新授权' : '需要授权写入权限',
+          needAuth: true
+        };
       }
 
       // 生成文件名
@@ -309,8 +370,40 @@ class AutoBackupManager {
       return { success: true, filename };
     } catch (error) {
       console.error('写入备份文件失败:', error);
+
+      // 判断是否是权限问题
+      if (error.name === 'NotAllowedError') {
+        return { success: false, error: '权限不足，请重新授权', needAuth: true };
+      }
+
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * 清除目录句柄
+   */
+  async clearHandle() {
+    return new Promise((resolve) => {
+      const request = indexedDB.open('OpenPassBackupDB', 1);
+
+      request.onsuccess = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains('directoryHandles')) {
+          resolve();
+          return;
+        }
+
+        const transaction = db.transaction('directoryHandles', 'readwrite');
+        const store = transaction.objectStore('directoryHandles');
+        store.delete('backupDirectory');
+
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
+      };
+
+      request.onerror = () => resolve();
+    });
   }
 
   /**

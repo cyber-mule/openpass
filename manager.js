@@ -478,6 +478,8 @@ class ManagerApp {
     const directoryBackupSection = document.getElementById('directoryBackupSection');
     const selectBackupDirectoryBtn = document.getElementById('selectBackupDirectoryBtn');
     const backupDirectoryStatus = document.getElementById('backupDirectoryStatus');
+    const directoryPermissionStatus = document.getElementById('directoryPermissionStatus');
+    const requestPermissionBtn = document.getElementById('requestPermissionBtn');
     const backupNowBtn = document.getElementById('backupNowBtn');
     const lastBackupTime = document.getElementById('lastBackupTime');
     const nextBackupTime = document.getElementById('nextBackupTime');
@@ -497,10 +499,8 @@ class ManagerApp {
     lastBackupTime.textContent = autoBackupManager.formatTime(settings.lastBackupTime);
     nextBackupTime.textContent = autoBackupManager.formatTime(settings.nextBackupTime);
 
-    // 检查目录句柄状态
-    if (settings.directoryBackup && settings.directoryHandle) {
-      backupDirectoryStatus.textContent = `已选择: ${settings.directoryHandle}`;
-    }
+    // 更新目录和权限状态
+    await this.updateDirectoryStatus();
 
     // 启用/禁用自动备份
     enableAutoBackup.addEventListener('change', async (e) => {
@@ -543,8 +543,11 @@ class ManagerApp {
       directoryBackupSection.style.display = enabled ? 'block' : 'none';
       await autoBackupManager.saveSettings({ directoryBackup: enabled });
 
-      if (!enabled) {
+      if (enabled) {
+        await this.updateDirectoryStatus();
+      } else {
         backupDirectoryStatus.textContent = '未选择目录';
+        directoryPermissionStatus.style.display = 'none';
       }
     });
 
@@ -554,9 +557,36 @@ class ManagerApp {
 
       if (result.success) {
         backupDirectoryStatus.textContent = `已选择: ${result.name}`;
+        await this.updateDirectoryStatus();
         this.showToast('目录选择成功', 'success');
       } else {
         this.showToast(result.error || '选择失败', 'error');
+      }
+    });
+
+    // 请求权限按钮
+    requestPermissionBtn.addEventListener('click', async () => {
+      const info = await autoBackupManager.getDirectoryInfo();
+
+      // 如果权限被拒绝或没有句柄，重新选择目录
+      if (info.permission === 'denied' || !info.hasHandle) {
+        const result = await autoBackupManager.selectDirectory();
+        if (result.success) {
+          document.getElementById('backupDirectoryStatus').textContent = `已选择: ${result.name}`;
+          await this.updateDirectoryStatus();
+          this.showToast('目录选择成功', 'success');
+        } else {
+          this.showToast(result.error || '选择失败', 'error');
+        }
+      } else {
+        // 请求权限
+        const result = await autoBackupManager.requestPermission();
+        if (result.success) {
+          await this.updateDirectoryStatus();
+          this.showToast('授权成功', 'success');
+        } else {
+          this.showToast(result.error || '授权失败', 'error');
+        }
       }
     });
 
@@ -602,9 +632,55 @@ class ManagerApp {
       if (messages.length > 0) {
         this.showToast(messages.join('，'), 'success');
       } else if (results.directory && !results.directory.success) {
+        // 如果需要授权，更新状态
+        if (results.directory.needAuth) {
+          await this.updateDirectoryStatus();
+        }
         this.showToast(results.directory.error || '备份失败', 'error');
       }
     });
+  }
+
+  /**
+   * 更新目录状态显示
+   */
+  async updateDirectoryStatus() {
+    const backupDirectoryStatus = document.getElementById('backupDirectoryStatus');
+    const directoryPermissionStatus = document.getElementById('directoryPermissionStatus');
+    const requestPermissionBtn = document.getElementById('requestPermissionBtn');
+
+    const info = await autoBackupManager.getDirectoryInfo();
+
+    if (!info.hasHandle) {
+      backupDirectoryStatus.textContent = '未选择目录';
+      directoryPermissionStatus.style.display = 'none';
+      return;
+    }
+
+    backupDirectoryStatus.textContent = `已选择: ${info.name}`;
+
+    // 显示权限状态
+    directoryPermissionStatus.style.display = 'flex';
+    directoryPermissionStatus.className = `permission-status ${info.permission}`;
+
+    const permissionText = directoryPermissionStatus.querySelector('.permission-text');
+
+    switch (info.permission) {
+      case 'granted':
+        permissionText.textContent = '已授权，可自动写入';
+        requestPermissionBtn.style.display = 'none';
+        break;
+      case 'prompt':
+        permissionText.textContent = '需要授权才能写入';
+        requestPermissionBtn.style.display = 'block';
+        requestPermissionBtn.textContent = '授权';
+        break;
+      case 'denied':
+        permissionText.textContent = '权限被拒绝，请重新选择目录';
+        requestPermissionBtn.style.display = 'block';
+        requestPermissionBtn.textContent = '重新选择';
+        break;
+    }
   }
 
   /**
