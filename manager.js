@@ -1456,13 +1456,27 @@ class ManagerApp {
    * 导入密钥
    */
   async importSecrets(importSecrets, duplicateAction) {
+    const total = importSecrets.length;
     let addedCount = 0;
     let updatedCount = 0;
     let skippedCount = 0;
+    let processedCount = 0;
+
+    // 显示进度提示
+    const progressToast = this.showProgressToast('正在导入...', 0, total);
 
     for (const secret of importSecrets) {
+      processedCount++;
+
+      // 更新进度（每 10 个更新一次，避免频繁更新）
+      if (processedCount % 10 === 0 || processedCount === total) {
+        this.updateProgressToast(progressToast, processedCount, total);
+      }
+
+      // 使用 site + secret 组合判断唯一性
       const existingIndex = this.secrets.findIndex(
-        s => s.site.toLowerCase() === secret.site.toLowerCase()
+        s => s.site.toLowerCase() === secret.site.toLowerCase() &&
+             s.secret.toUpperCase() === secret.secret.toUpperCase()
       );
 
       if (existingIndex !== -1) {
@@ -1497,6 +1511,9 @@ class ManagerApp {
         addedCount++;
       }
     }
+
+    // 移除进度提示
+    this.hideProgressToast(progressToast);
 
     await this.saveSecrets();
     this.renderSecretsTable();
@@ -1542,6 +1559,61 @@ class ManagerApp {
     setTimeout(() => {
       toast.classList.remove('show');
     }, 3000);
+  }
+
+  /**
+   * 显示进度提示
+   */
+  showProgressToast(message, current, total) {
+    // 移除已有的进度提示
+    const existing = document.getElementById('progressToast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'progressToast';
+    toast.className = 'progress-toast';
+    toast.innerHTML = `
+      <div class="progress-content">
+        <div class="progress-spinner"></div>
+        <div class="progress-text">${message}</div>
+        <div class="progress-count">${current}/${total}</div>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-bar-fill" style="width: ${total > 0 ? (current / total * 100) : 0}%"></div>
+      </div>
+    `;
+
+    document.body.appendChild(toast);
+    return toast;
+  }
+
+  /**
+   * 更新进度提示
+   */
+  updateProgressToast(toast, current, total) {
+    if (!toast) return;
+
+    const countEl = toast.querySelector('.progress-count');
+    const barEl = toast.querySelector('.progress-bar-fill');
+
+    if (countEl) {
+      countEl.textContent = `${current}/${total}`;
+    }
+    if (barEl) {
+      barEl.style.width = `${total > 0 ? (current / total * 100) : 0}%`;
+    }
+  }
+
+  /**
+   * 隐藏进度提示
+   */
+  hideProgressToast(toast) {
+    if (toast) {
+      toast.remove();
+    } else {
+      const existing = document.getElementById('progressToast');
+      if (existing) existing.remove();
+    }
   }
 
   /**
