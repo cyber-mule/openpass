@@ -746,6 +746,11 @@ class ManagerApp {
 
     // 自动备份设置
     this.initAutoBackupSettings();
+
+    // 清除所有数据
+    document.getElementById('clearAllDataBtn').addEventListener('click', () => {
+      this.showClearDataDialog();
+    });
   }
 
   /**
@@ -1564,6 +1569,95 @@ class ManagerApp {
       console.error('修改密码失败:', error);
       errorEl.textContent = '修改失败，请重试';
     }
+  }
+
+  /**
+   * 显示清除数据确认对话框
+   */
+  showClearDataDialog() {
+    // 创建对话框
+    const dialog = document.createElement('div');
+    dialog.className = 'confirm-dialog';
+    dialog.innerHTML = `
+      <div class="confirm-dialog-content">
+        <h3 class="confirm-dialog-title">⚠️ 清除所有数据</h3>
+        <p class="confirm-dialog-message">
+          此操作将删除所有密钥、设置和备份快照，恢复到初始状态。<br>
+          <strong>此操作不可撤销！</strong>
+        </p>
+        <div class="confirm-dialog-input">
+          <label>请输入 "DELETE" 确认删除</label>
+          <input type="text" id="confirmDeleteInput" placeholder="输入 DELETE">
+        </div>
+        <div class="confirm-dialog-actions">
+          <button class="btn-secondary" id="cancelClearBtn">取消</button>
+          <button class="btn-danger" id="confirmClearBtn" disabled>确认清除</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dialog);
+
+    const input = document.getElementById('confirmDeleteInput');
+    const confirmBtn = document.getElementById('confirmClearBtn');
+    const cancelBtn = document.getElementById('cancelClearBtn');
+
+    // 输入验证
+    input.addEventListener('input', () => {
+      confirmBtn.disabled = input.value !== 'DELETE';
+    });
+
+    // 取消
+    cancelBtn.addEventListener('click', () => {
+      dialog.remove();
+    });
+
+    // 点击背景关闭
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) {
+        dialog.remove();
+      }
+    });
+
+    // 确认清除
+    confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = '清除中...';
+
+      try {
+        await this.clearAllData();
+        dialog.remove();
+        this.showToast('数据已清除', 'success');
+
+        // 刷新页面，重新开始引导
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } catch (error) {
+        console.error('清除数据失败:', error);
+        this.showToast('清除失败', 'error');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '确认清除';
+      }
+    });
+  }
+
+  /**
+   * 清除所有数据
+   */
+  async clearAllData() {
+    // 清除 chrome.storage.local
+    await chrome.storage.local.clear();
+
+    // 清除 chrome.storage.session
+    await chrome.storage.session.clear();
+
+    // 清除 IndexedDB（目录句柄）
+    return new Promise((resolve) => {
+      const request = indexedDB.deleteDatabase('OpenPassBackupDB');
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve(); // 即使失败也继续
+    });
   }
 }
 
