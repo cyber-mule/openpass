@@ -897,6 +897,33 @@ body {
   padding: 16px;
 }
 
+/* 备份信息 */
+.backup-info {
+  display: flex;
+  gap: 16px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.backup-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.backup-info-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.backup-info-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
 .modal-text {
   font-size: 13px;
   color: var(--text-secondary);

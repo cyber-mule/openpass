@@ -53,52 +53,56 @@ jobs:
       - name: Build extension
         run: |
           # 创建构建目录
-          mkdir -p build/totppass
+          mkdir -p build/openpass
 
           # 复制所有必要文件
-          cp -r icons build/totppass/
-          cp manifest.json build/totppass/
-          cp background.js build/totppass/
-          cp totp.js build/totppass/
-          cp crypto.js build/totppass/
-          cp jsQR.min.js build/totppass/
+          cp -r icons build/openpass/
+          cp manifest.json build/openpass/
+          cp background.js build/openpass/
+          cp totp.js build/openpass/
+          cp crypto.js build/openpass/
+          cp jsQR.min.js build/openpass/
 
           # Popup 页面
-          cp popup.html build/totppass/
-          cp popup.css build/totppass/
-          cp popup.js build/totppass/
+          cp popup.html build/openpass/
+          cp popup.css build/openpass/
+          cp popup.js build/openpass/
 
           # Manager 页面
-          cp manager.html build/totppass/
-          cp manager.css build/totppass/
-          cp manager.js build/totppass/
+          cp manager.html build/openpass/
+          cp manager.css build/openpass/
+          cp manager.js build/openpass/
 
           # Setup 和 Auth 页面
-          cp setup.html build/totppass/
-          cp auth.html build/totppass/
+          cp setup.html build/openpass/
+          cp setup.css build/openpass/
+          cp setup.js build/openpass/
+          cp auth.html build/openpass/
+          cp auth.css build/openpass/
+          cp auth.js build/openpass/
 
           # Content Script
-          cp content.js build/totppass/
-          cp content.css build/totppass/
+          cp content.js build/openpass/
+          cp content.css build/openpass/
 
           # 打包为 zip
           cd build
-          zip -r ../totppass-${{ steps.version.outputs.tag_name }}.zip totppass
+          zip -r ../${{ steps.version.outputs.tag_name }}.zip openpass
           cd ..
 
           echo "Extension packaged successfully"
-          ls -la totppass-*.zip
+          ls -la *.zip
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: totppass-${{ steps.version.outputs.tag_name }}.zip
+          files: ${{ steps.version.outputs.tag_name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
         run: |
           echo "✅ Release ${{ steps.version.outputs.tag_name }} built and uploaded successfully!"
-          echo "📦 Package: totppass-${{ steps.version.outputs.tag_name }}.zip"
+          echo "📦 Package: ${{ steps.version.outputs.tag_name }}.zip"
           echo "🕐 Build time: ${{ steps.version.outputs.build_time }}"
           echo "🔗 Commit: ${{ steps.version.outputs.commit_hash }}"

@@ -1,5 +1,5 @@
 /**
- * 2FA Authenticator - 弹窗逻辑
+ * OpenPass - 弹窗逻辑
  * 弹窗默认不需要认证，只有导入/导出等敏感操作需要密码验证
  */
 
@@ -57,7 +57,7 @@ class TwoFAApp {
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
         </div>
-        <h2>欢迎使用 TOTPPass</h2>
+        <h2>欢迎使用 OpenPass</h2>
         <p>请先设置主密码以保护你的密钥</p>
         <button id="goSetupBtn" class="btn-primary">设置主密码</button>
       </div>
@@ -910,11 +910,23 @@ class TwoFAApp {
           return;
         }
 
+        // 显示备份信息
+        const backupInfo = document.getElementById('backupInfo');
+        if (data.format === 'openpass-backup' && data.appVersion) {
+          document.getElementById('backupAppVersion').textContent = `v${data.appVersion}`;
+          document.getElementById('backupExportTime').textContent = data.exportTime
+            ? new Date(data.exportTime).toLocaleString('zh-CN')
+            : '-';
+          backupInfo.style.display = 'flex';
+        } else {
+          backupInfo.style.display = 'none';
+        }
+
         // 存储待导入数据
-        this.pendingImportData = data.secrets;
+        this.pendingImportData = data.secrets || data;
 
         // 显示恢复选项对话框
-        document.getElementById('importCount').textContent = data.secrets.length;
+        document.getElementById('importCount').textContent = this.pendingImportData.length;
         document.getElementById('currentCount').textContent = this.secrets.length;
         restoreModal.classList.remove('hidden');
 
@@ -992,9 +1004,26 @@ class TwoFAApp {
    */
   validateBackupData(data) {
     if (!data || typeof data !== 'object') return false;
-    if (!Array.isArray(data.secrets)) return false;
 
-    for (const secret of data.secrets) {
+    // 检查格式标识
+    if (data.format === 'openpass-backup') {
+      // 新格式 (formatVersion: 1+)
+      if (!Array.isArray(data.secrets)) return false;
+    } else if (data.version === '2.0' || data.version === '1.0') {
+      // 旧格式兼容 (totppass-backup 或早期格式)
+      if (!Array.isArray(data.secrets)) return false;
+    } else if (Array.isArray(data)) {
+      // 最简格式：直接是数组
+      return this.validateSecretsArray(data);
+    } else if (Array.isArray(data.secrets)) {
+      // 兼容其他包含 secrets 字段的格式
+    } else {
+      return false;
+    }
+
+    // 验证每个密钥
+    const secrets = data.secrets || data;
+    for (const secret of secrets) {
       if (!secret.secret || !secret.site) return false;
       if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') return false;
     }
@@ -1024,10 +1053,17 @@ class TwoFAApp {
 
     // 验证密码
     await this.verifyPasswordForAction('导出', async () => {
+      // 获取应用版本
+      const manifest = chrome.runtime.getManifest();
+      const appVersion = manifest.version || '0.0.0';
+
       const backupData = {
-        version: '1.0',
+        format: 'openpass-backup',
+        formatVersion: 1,
+        appVersion: appVersion,
         exportTime: new Date().toISOString(),
         count: this.secrets.length,
+        encrypted: false,
         secrets: this.secrets
       };
 
@@ -1036,7 +1072,7 @@ class TwoFAApp {
       const url = URL.createObjectURL(blob);
 
       const timestamp = new Date().toISOString().slice(0, 10);
-      const filename = `totppass-backup-${timestamp}.json`;
+      const filename = `openpass-backup-${timestamp}.json`;
 
       const a = document.createElement('a');
       a.href = url;

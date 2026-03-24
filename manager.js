@@ -1,5 +1,5 @@
 /**
- * TOTPPass - Manager Page Logic
+ * OpenPass - Manager Page Logic
  * 管理页面需要认证，15分钟无操作超时
  */
 
@@ -213,8 +213,20 @@ class ManagerApp {
           return;
         }
 
-        this.pendingImportData = data.secrets;
-        document.getElementById('importCount').textContent = data.secrets.length;
+        // 显示备份信息
+        const backupInfo = document.getElementById('backupInfo');
+        if (data.format === 'openpass-backup' && data.appVersion) {
+          document.getElementById('backupAppVersion').textContent = `v${data.appVersion}`;
+          document.getElementById('backupExportTime').textContent = data.exportTime
+            ? new Date(data.exportTime).toLocaleString('zh-CN')
+            : '-';
+          backupInfo.style.display = 'block';
+        } else {
+          backupInfo.style.display = 'none';
+        }
+
+        this.pendingImportData = data.secrets || data;
+        document.getElementById('importCount').textContent = this.pendingImportData.length;
         document.getElementById('currentCount').textContent = this.secrets.length;
         document.getElementById('importModal').classList.remove('hidden');
       } catch (err) {
@@ -551,9 +563,14 @@ class ManagerApp {
       return;
     }
 
+    // 获取应用版本
+    const manifest = chrome.runtime.getManifest();
+    const appVersion = manifest.version || '0.0.0';
+
     const backupData = {
-      version: '2.0',
-      format: 'totppass-backup',
+      format: 'openpass-backup',
+      formatVersion: 1,
+      appVersion: appVersion,
       exportTime: new Date().toISOString(),
       count: this.secrets.length,
       encrypted: false,
@@ -565,7 +582,7 @@ class ManagerApp {
     const url = URL.createObjectURL(blob);
 
     const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `totppass-backup-${timestamp}.json`;
+    const filename = `openpass-backup-${timestamp}.json`;
 
     const a = document.createElement('a');
     a.href = url;
@@ -584,20 +601,25 @@ class ManagerApp {
   validateBackupData(data) {
     if (!data || typeof data !== 'object') return false;
 
-    // 检查版本和格式
-    if (data.format === 'totppass-backup') {
-      // 新格式
+    // 检查格式标识
+    if (data.format === 'openpass-backup') {
+      // 新格式 (formatVersion: 1+)
       if (!Array.isArray(data.secrets)) return false;
-    } else if (data.version === '1.0') {
-      // 旧格式兼容
+    } else if (data.version === '2.0' || data.version === '1.0') {
+      // 旧格式兼容 (totppass-backup 或早期格式)
       if (!Array.isArray(data.secrets)) return false;
+    } else if (Array.isArray(data)) {
+      // 最简格式：直接是数组
+      data = { secrets: data, formatVersion: 0 };
     } else if (Array.isArray(data.secrets)) {
-      // 最简格式
+      // 兼容其他包含 secrets 字段的格式
     } else {
       return false;
     }
 
-    for (const secret of data.secrets) {
+    // 验证每个密钥
+    const secrets = data.secrets || data;
+    for (const secret of secrets) {
       if (!secret.secret || !secret.site) return false;
       if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') return false;
     }

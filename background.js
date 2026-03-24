@@ -1,5 +1,5 @@
 /**
- * 2FA Authenticator - Background Service Worker
+ * OpenPass - Background Service Worker
  * 处理扩展图标 badge 显示当前网站匹配的密钥数量
  * 支持右键菜单解析 QR 码
  * 支持自动填充验证码

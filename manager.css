@@ -1,5 +1,5 @@
 /**
- * TOTPPass - Manager Page Styles
+ * OpenPass - Manager Page Styles
  */
 
 * {
@@ -703,6 +703,33 @@ body {
 
 .modal-body {
   padding: 24px;
+}
+
+/* 备份信息 */
+.backup-info {
+  display: flex;
+  gap: 24px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.backup-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backup-info-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.backup-info-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-color);
 }
 
 .modal-footer {

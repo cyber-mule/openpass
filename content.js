@@ -1,5 +1,5 @@
 /**
- * 2FA Authenticator - Content Script
+ * OpenPass - Content Script
  * 自动检测 2FA 输入框并显示浮动填充按钮
  */
 
@@ -239,14 +239,14 @@
     if (floatingButtons.has(input)) return;
 
     const button = document.createElement('div');
-    button.className = 'totppass-float-btn';
+    button.className = 'openpass-float-btn';
     button.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
       </svg>
     `;
-    button.title = 'TOTPPass - 填充验证码';
+    button.title = 'OpenPass - 填充验证码';
 
     // 点击事件
     button.addEventListener('click', (e) => {
@@ -269,7 +269,7 @@
   function createWrapper(input) {
     const parent = input.parentNode;
     const wrapper = document.createElement('div');
-    wrapper.className = 'totppass-input-wrapper';
+    wrapper.className = 'openpass-input-wrapper';
 
     // 计算输入框的位置和大小
     const rect = input.getBoundingClientRect();
@@ -313,23 +313,57 @@
   /**
    * 显示密钥选择列表
    */
-  function showSecretSelector(input, button, matches) {
+  async function showSecretSelector(input, button, matches) {
     // 移除已存在的选择器
-    const existingSelector = document.querySelector('.totppass-selector');
+    const existingSelector = document.querySelector('.openpass-selector');
     if (existingSelector) existingSelector.remove();
 
     const selector = document.createElement('div');
-    selector.className = 'totppass-selector';
+    selector.className = 'openpass-selector';
 
-    let html = '<div class="totppass-selector-header">选择要填充的密钥</div>';
-    html += '<div class="totppass-selector-list">';
+    let html = '<div class="openpass-selector-header">选择要填充的密钥</div>';
+    html += '<div class="openpass-selector-list">';
+
+    // 为每个密钥生成验证码
+    const codesData = [];
+    for (let i = 0; i < matches.length; i++) {
+      const secret = matches[i];
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action: 'generateCode',
+          secret: secret.secret,
+          digits: secret.digits
+        });
+        codesData.push({
+          index: i,
+          code: response.code,
+          remainingSeconds: response.remainingSeconds
+        });
+      } catch (error) {
+        codesData.push({
+          index: i,
+          code: '------',
+          remainingSeconds: 30
+        });
+      }
+    }
 
     matches.forEach((secret, index) => {
       const name = secret.name || secret.site;
+      const codeData = codesData.find(c => c.index === index);
+      const code = codeData ? codeData.code : '------';
+      const remaining = codeData ? codeData.remainingSeconds : 30;
+
       html += `
-        <div class="totppass-selector-item" data-index="${index}">
-          <div class="totppass-selector-name">${name}</div>
-          <div class="totppass-selector-site">${secret.site}</div>
+        <div class="openpass-selector-item" data-index="${index}">
+          <div class="openpass-selector-info">
+            <div class="openpass-selector-name">${name}</div>
+            <div class="openpass-selector-site">${secret.site}</div>
+          </div>
+          <div class="openpass-selector-code">
+            <span class="openpass-code-value">${formatCode(code)}</span>
+            <span class="openpass-countdown" data-index="${index}" data-remaining="${remaining}">${remaining}s</span>
+          </div>
         </div>
       `;
     });
@@ -344,10 +378,17 @@
 
     document.body.appendChild(selector);
 
+    // 启动倒计时
+    startCountdown(selector, matches, input, button);
+
     // 点击选项
-    selector.querySelectorAll('.totppass-selector-item').forEach((item, index) => {
+    selector.querySelectorAll('.openpass-selector-item').forEach((item, index) => {
       item.addEventListener('click', async (e) => {
         e.stopPropagation();
+        // 清除倒计时定时器
+        if (selector.dataset.intervalId) {
+          clearInterval(parseInt(selector.dataset.intervalId, 10));
+        }
         await doFillCode(input, button, matches[index]);
         selector.remove();
       });
@@ -356,11 +397,87 @@
     // 点击其他地方关闭
     const closeHandler = (e) => {
       if (!selector.contains(e.target)) {
+        // 清除倒计时定时器
+        if (selector.dataset.intervalId) {
+          clearInterval(parseInt(selector.dataset.intervalId, 10));
+        }
         selector.remove();
         document.removeEventListener('click', closeHandler);
       }
     };
     setTimeout(() => document.addEventListener('click', closeHandler), 0);
+  }
+
+  /**
+   * 格式化验证码（每3位加空格）
+   */
+  function formatCode(code) {
+    if (!code || code.length !== 6) return code;
+    return code.slice(0, 3) + ' ' + code.slice(3);
+  }
+
+  /**
+   * 启动倒计时
+   */
+  function startCountdown(selector, matches, input, button) {
+    const countdownElements = selector.querySelectorAll('.openpass-countdown');
+    if (countdownElements.length === 0) return;
+
+    const intervalId = setInterval(async () => {
+      // 检查选择器是否还存在
+      if (!document.body.contains(selector)) {
+        clearInterval(intervalId);
+        return;
+      }
+
+      let needRefresh = false;
+
+      countdownElements.forEach((el) => {
+        let remaining = parseInt(el.dataset.remaining, 10);
+        remaining--;
+
+        if (remaining <= 0) {
+          needRefresh = true;
+        } else {
+          el.dataset.remaining = remaining;
+          el.textContent = remaining + 's';
+
+          // 根据剩余时间调整样式
+          if (remaining <= 5) {
+            el.classList.add('openpass-countdown-urgent');
+          } else if (remaining <= 10) {
+            el.classList.add('openpass-countdown-warning');
+          }
+        }
+      });
+
+      // 如果有验证码过期，刷新所有验证码
+      if (needRefresh) {
+        clearInterval(intervalId);
+        // 重新生成验证码
+        const codeValues = selector.querySelectorAll('.openpass-code-value');
+        for (let i = 0; i < matches.length; i++) {
+          try {
+            const response = await chrome.runtime.sendMessage({
+              action: 'generateCode',
+              secret: matches[i].secret,
+              digits: matches[i].digits
+            });
+            codeValues[i].textContent = formatCode(response.code);
+            countdownElements[i].dataset.remaining = response.remainingSeconds;
+            countdownElements[i].textContent = response.remainingSeconds + 's';
+            countdownElements[i].classList.remove('openpass-countdown-urgent', 'openpass-countdown-warning');
+          } catch (error) {
+            console.error('刷新验证码失败:', error);
+          }
+        }
+        // 重新启动倒计时
+        startCountdown(selector, matches, input, button);
+      }
+    }, 1000);
+
+    // 存储 intervalId 以便在移除选择器时清除
+    selector.dataset.intervalId = intervalId;
   }
 
   /**
@@ -381,13 +498,13 @@
         input.dispatchEvent(new Event('change', { bubbles: true }));
 
         // 视觉反馈
-        button.classList.add('totppass-success');
-        setTimeout(() => button.classList.remove('totppass-success'), 1000);
+        button.classList.add('openpass-success');
+        setTimeout(() => button.classList.remove('openpass-success'), 1000);
 
         showToast('验证码已填充', 'success');
       }
     } catch (error) {
-      console.error('TOTPPass: 填充失败', error);
+      console.error('OpenPass: 填充失败', error);
       showToast('填充失败', 'error');
     }
   }
@@ -398,11 +515,11 @@
   function updateButtonState(button) {
     const matches = getMatchingSecrets();
     if (matches.length > 0) {
-      button.classList.add('totppass-has-secret');
-      button.title = `TOTPPass - 点击填充验证码 (${matches.length} 个密钥)`;
+      button.classList.add('openpass-has-secret');
+      button.title = `OpenPass - 点击填充验证码 (${matches.length} 个密钥)`;
     } else {
-      button.classList.remove('totppass-has-secret');
-      button.title = 'TOTPPass - 未找到当前网站的密钥';
+      button.classList.remove('openpass-has-secret');
+      button.title = 'OpenPass - 未找到当前网站的密钥';
     }
   }
 
@@ -458,22 +575,22 @@
    */
   function showToast(message, type = 'default') {
     // 移除旧的 toast
-    const oldToast = document.querySelector('.totppass-toast');
+    const oldToast = document.querySelector('.openpass-toast');
     if (oldToast) oldToast.remove();
 
     const toast = document.createElement('div');
-    toast.className = `totppass-toast totppass-toast-${type}`;
+    toast.className = `openpass-toast openpass-toast-${type}`;
     toast.textContent = message;
     document.body.appendChild(toast);
 
     // 动画显示
     requestAnimationFrame(() => {
-      toast.classList.add('totppass-toast-show');
+      toast.classList.add('openpass-toast-show');
     });
 
     // 自动移除
     setTimeout(() => {
-      toast.classList.remove('totppass-toast-show');
+      toast.classList.remove('openpass-toast-show');
       setTimeout(() => toast.remove(), 300);
     }, 2000);
   }

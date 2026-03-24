@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "2FA Authenticator",
+  "name": "OpenPass",
   "version": "0.0.1",
-  "description": "本地存储网站的 2FA 密钥，生成验证码",
+  "description": "开源的 2FA 认证工具，本地存储密钥，一键生成验证码",
   "author": "cyber-mule",
-  "homepage_url": "https://github.com/cyber-mule/totppass",
+  "homepage_url": "https://github.com/cyber-mule/openpass",
   "permissions": [
     "storage",
     "activeTab",

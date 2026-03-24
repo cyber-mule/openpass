@@ -1,5 +1,5 @@
 /**
- * TOTPPass - 主密码设置页面逻辑
+ * OpenPass - 主密码设置页面逻辑
  */
 
 document.addEventListener('DOMContentLoaded', () => {
