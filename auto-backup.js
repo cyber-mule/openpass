@@ -9,36 +9,44 @@ class AutoBackupManager {
     this.maxSnapshots = 5;
     this.debounceTimer = null;
     this.debounceDelay = 3000; // 3 秒防抖
+    this.pendingSecrets = null;
+    this.pendingOptions = null;
   }
 
   /**
-   * 数据变化时触发备份（带防抖）
+   * 数据变化时触发备份（带防抖，立即返回不阻塞）
    */
-  async triggerChangeBackup(secrets, options = {}) {
+  triggerChangeBackup(secrets, options = {}) {
+    // 保存最新的数据
+    this.pendingSecrets = secrets;
+    this.pendingOptions = options;
+
     // 清除之前的定时器
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
 
-    // 设置新的定时器
-    return new Promise((resolve) => {
-      this.debounceTimer = setTimeout(async () => {
+    // 设置新的定时器，延迟执行备份
+    this.debounceTimer = setTimeout(async () => {
+      try {
         const settings = await this.getSettings();
 
         // 只保存本地快照，不写目录（避免频繁写入）
-        if (settings.localSnapshot) {
-          const backupData = await backupManager.createBackup(secrets, {
-            password: options.password
+        if (settings.localSnapshot && this.pendingSecrets) {
+          const backupData = await backupManager.createBackup(this.pendingSecrets, {
+            password: this.pendingOptions.password
           });
 
-          const snapshots = await this.saveSnapshot(backupData);
+          await this.saveSnapshot(backupData);
           console.log('OpenPass: 数据变化，已自动备份快照');
-          resolve({ snapshot: { success: true, count: snapshots.length } });
-        } else {
-          resolve({ snapshot: null });
         }
-      }, this.debounceDelay);
-    });
+      } catch (error) {
+        console.error('OpenPass: 自动备份失败', error);
+      }
+    }, this.debounceDelay);
+
+    // 立即返回，不等待备份完成
+    return Promise.resolve();
   }
 
   /**

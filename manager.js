@@ -195,9 +195,16 @@ class ManagerApp {
    * 处理欢迎引导中设置主密码
    */
   async handleWelcomeSetPassword() {
+    const submitBtn = document.getElementById('welcomeSetPasswordBtn');
+    const errorEl = document.getElementById('welcomePasswordError');
+
+    // 防止重复提交
+    if (submitBtn.disabled) {
+      return;
+    }
+
     const password = document.getElementById('welcomePassword').value;
     const confirmPassword = document.getElementById('welcomePasswordConfirm').value;
-    const errorEl = document.getElementById('welcomePasswordError');
 
     // 验证
     if (!password) {
@@ -214,6 +221,11 @@ class ManagerApp {
       errorEl.textContent = '两次输入的密码不一致';
       return;
     }
+
+    // 显示加载状态
+    submitBtn.disabled = true;
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = '设置中...';
 
     try {
       // 创建密码哈希
@@ -262,6 +274,10 @@ class ManagerApp {
     } catch (error) {
       console.error('设置主密码失败:', error);
       errorEl.textContent = '设置失败，请重试';
+    } finally {
+      // 恢复按钮状态
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
     }
   }
 
@@ -387,16 +403,16 @@ class ManagerApp {
       chrome.storage.local.set({
         secrets: this.secrets,
         sitesList: sitesList
-      }, async () => {
-        // 数据变化后自动备份本地快照
-        await this.autoBackupOnChange();
+      }, () => {
+        // 数据变化后异步备份，不阻塞
+        this.autoBackupOnChange().catch(err => console.error('自动备份失败:', err));
         resolve();
       });
     });
   }
 
   /**
-   * 数据变化时自动备份
+   * 数据变化时自动备份（异步执行，不阻塞主流程）
    */
   async autoBackupOnChange() {
     const settings = await autoBackupManager.getSettings();
@@ -420,8 +436,10 @@ class ManagerApp {
       }
     }
 
-    // 触发备份（带防抖）
-    await autoBackupManager.triggerChangeBackup(this.secrets, { password });
+    // 触发备份（带防抖，异步执行）
+    autoBackupManager.triggerChangeBackup(this.secrets, { password }).catch(err => {
+      console.error('自动备份失败:', err);
+    });
   }
 
   /**
@@ -1252,6 +1270,12 @@ class ManagerApp {
    * 保存密钥
    */
   async saveSecret() {
+    // 防止重复提交
+    const submitBtn = document.querySelector('#secretForm button[type="submit"]');
+    if (submitBtn.disabled) {
+      return;
+    }
+
     const id = document.getElementById('secretId').value;
     const secret = document.getElementById('secretInput').value.trim().toUpperCase();
     const site = document.getElementById('siteInput').value.trim().toLowerCase();
@@ -1268,38 +1292,49 @@ class ManagerApp {
       return;
     }
 
-    if (id) {
-      // 编辑现有密钥
-      const index = this.secrets.findIndex(s => s.id === id);
-      if (index !== -1) {
-        this.secrets[index] = {
-          ...this.secrets[index],
+    // 显示加载状态
+    submitBtn.disabled = true;
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = '保存中...';
+
+    try {
+      if (id) {
+        // 编辑现有密钥
+        const index = this.secrets.findIndex(s => s.id === id);
+        if (index !== -1) {
+          this.secrets[index] = {
+            ...this.secrets[index],
+            secret,
+            site,
+            name,
+            digits,
+            updatedAt: new Date().toISOString()
+          };
+        }
+      } else {
+        // 添加新密钥（允许同站点多个密钥）
+        this.secrets.push({
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
           secret,
           site,
           name,
           digits,
-          updatedAt: new Date().toISOString()
-        };
+          createdAt: new Date().toISOString()
+        });
       }
-    } else {
-      // 添加新密钥（允许同站点多个密钥）
-      this.secrets.push({
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        secret,
-        site,
-        name,
-        digits,
-        createdAt: new Date().toISOString()
-      });
+
+      await this.saveSecrets();
+      this.hideSecretModal();
+      this.renderSecretsTable();
+      this.showToast(id ? '密钥已更新' : '密钥已添加', 'success');
+
+      // 更新欢迎引导状态
+      this.refreshWelcomeStatus().catch(() => {});
+    } finally {
+      // 恢复按钮状态
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
     }
-
-    await this.saveSecrets();
-    this.hideSecretModal();
-    this.renderSecretsTable();
-    this.showToast(id ? '密钥已更新' : '密钥已添加', 'success');
-
-    // 更新欢迎引导状态
-    await this.refreshWelcomeStatus();
   }
 
   /**
