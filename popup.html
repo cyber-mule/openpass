@@ -318,6 +318,7 @@
             <span class="backup-info-value" id="backupExportTime">-</span>
           </div>
         </div>
+        <div id="compatibilityWarning" class="compatibility-warning" style="display: none;"></div>
         <p class="modal-text">检测到备份文件包含 <span id="importCount">0</span> 个密钥。</p>
         <p class="modal-text">当前已有 <span id="currentCount">0</span> 个密钥。</p>
         <p class="modal-text">请选择导入方式：</p>
@@ -396,6 +397,7 @@
 
   <script src="crypto.js"></script>
   <script src="totp.js"></script>
+  <script src="backup-manager.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

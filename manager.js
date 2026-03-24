@@ -3,6 +3,10 @@
  * 管理页面需要认证，15分钟无操作超时
  */
 
+// 导入备份管理器
+// eslint-disable-next-line no-unused-vars
+const backupManager = new BackupManager();
+
 class ManagerApp {
   constructor() {
     this.secrets = [];
@@ -206,26 +210,46 @@ class ManagerApp {
 
       try {
         const text = await file.text();
-        const data = JSON.parse(text);
+        let data = JSON.parse(text);
 
-        if (!this.validateBackupData(data)) {
-          this.showToast('备份文件格式无效', 'error');
+        // 验证备份格式
+        const validationResult = backupManager.validateBackup(data);
+        if (!validationResult.valid) {
+          this.showToast(validationResult.error || '备份文件格式无效', 'error');
           return;
         }
+        data = validationResult.data;
+
+        // 检查版本兼容性
+        const compatibility = backupManager.checkCompatibility(data.appVersion || '0.0.0');
 
         // 显示备份信息
         const backupInfo = document.getElementById('backupInfo');
-        if (data.format === 'openpass-backup' && data.appVersion) {
-          document.getElementById('backupAppVersion').textContent = `v${data.appVersion}`;
-          document.getElementById('backupExportTime').textContent = data.exportTime
-            ? new Date(data.exportTime).toLocaleString('zh-CN')
-            : '-';
-          backupInfo.style.display = 'block';
+        const compatibilityWarning = document.getElementById('compatibilityWarning');
+
+        document.getElementById('backupAppVersion').textContent = `v${data.appVersion || '未知'}`;
+        document.getElementById('backupExportTime').textContent = data.exportTime
+          ? new Date(data.exportTime).toLocaleString('zh-CN')
+          : '-';
+        backupInfo.style.display = 'block';
+
+        // 显示兼容性警告
+        if (compatibility.level === 'warning') {
+          compatibilityWarning.textContent = compatibility.message;
+          compatibilityWarning.style.display = 'block';
+        } else if (compatibility.level === 'error') {
+          this.showToast(compatibility.message, 'error');
+          return;
         } else {
-          backupInfo.style.display = 'none';
+          compatibilityWarning.style.display = 'none';
         }
 
-        this.pendingImportData = data.secrets || data;
+        // 如果需要迁移，先迁移数据
+        if (compatibility.level === 'warning') {
+          data = backupManager.migrateData(data);
+        }
+
+        this.pendingImportData = data.secrets;
         document.getElementById('importCount').textContent = this.pendingImportData.length;
         document.getElementById('currentCount').textContent = this.secrets.length;
         document.getElementById('importModal').classList.remove('hidden');
@@ -563,19 +587,8 @@ class ManagerApp {
       return;
     }
 
-    // 获取应用版本
-    const manifest = chrome.runtime.getManifest();
-    const appVersion = manifest.version || '0.0.0';
-
-    const backupData = {
-      format: 'openpass-backup',
-      formatVersion: 1,
-      appVersion: appVersion,
-      exportTime: new Date().toISOString(),
-      count: this.secrets.length,
-      encrypted: false,
-      secrets: this.secrets
-    };
+    // 使用备份管理器创建备份
+    const backupData = backupManager.createBackup(this.secrets);
 
     const json = JSON.stringify(backupData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
@@ -599,31 +612,11 @@ class ManagerApp {
    * 验证备份数据
    */
   validateBackupData(data) {
-    if (!data || typeof data !== 'object') return false;
-
-    // 检查格式标识
-    if (data.format === 'openpass-backup') {
-      // 新格式 (formatVersion: 1+)
-      if (!Array.isArray(data.secrets)) return false;
-    } else if (data.version === '2.0' || data.version === '1.0') {
-      // 旧格式兼容 (totppass-backup 或早期格式)
-      if (!Array.isArray(data.secrets)) return false;
-    } else if (Array.isArray(data)) {
-      // 最简格式：直接是数组
-      data = { secrets: data, formatVersion: 0 };
-    } else if (Array.isArray(data.secrets)) {
-      // 兼容其他包含 secrets 字段的格式
-    } else {
+    const result = backupManager.validateBackup(data);
+    if (!result.valid) {
+      console.error('备份验证失败:', result.error);
       return false;
     }
-
-    // 验证每个密钥
-    const secrets = data.secrets || data;
-    for (const secret of secrets) {
-      if (!secret.secret || !secret.site) return false;
-      if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') return false;
-    }
-
     return true;
   }
 

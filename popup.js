@@ -3,6 +3,10 @@
  * 弹窗默认不需要认证，只有导入/导出等敏感操作需要密码验证
  */
 
+// 导入备份管理器
+// eslint-disable-next-line no-unused-vars
+const backupManager = new BackupManager();
+
 class TwoFAApp {
   constructor() {
     this.secrets = [];
@@ -902,28 +906,47 @@ class TwoFAApp {
 
       try {
         const text = await file.text();
-        const data = JSON.parse(text);
+        let data = JSON.parse(text);
 
-        // 验证数据格式
-        if (!this.validateBackupData(data)) {
-          this.showToast('备份文件格式无效');
+        // 验证备份格式
+        const validationResult = backupManager.validateBackup(data);
+        if (!validationResult.valid) {
+          this.showToast(validationResult.error || '备份文件格式无效');
           return;
         }
+        data = validationResult.data;
+
+        // 检查版本兼容性
+        const compatibility = backupManager.checkCompatibility(data.appVersion || '0.0.0');
 
         // 显示备份信息
         const backupInfo = document.getElementById('backupInfo');
-        if (data.format === 'openpass-backup' && data.appVersion) {
-          document.getElementById('backupAppVersion').textContent = `v${data.appVersion}`;
-          document.getElementById('backupExportTime').textContent = data.exportTime
-            ? new Date(data.exportTime).toLocaleString('zh-CN')
-            : '-';
-          backupInfo.style.display = 'flex';
+        const compatibilityWarning = document.getElementById('compatibilityWarning');
+
+        document.getElementById('backupAppVersion').textContent = `v${data.appVersion || '未知'}`;
+        document.getElementById('backupExportTime').textContent = data.exportTime
+          ? new Date(data.exportTime).toLocaleString('zh-CN')
+          : '-';
+        backupInfo.style.display = 'flex';
+
+        // 显示兼容性警告
+        if (compatibility.level === 'warning') {
+          compatibilityWarning.textContent = compatibility.message;
+          compatibilityWarning.style.display = 'block';
+        } else if (compatibility.level === 'error') {
+          this.showToast(compatibility.message);
+          return;
         } else {
-          backupInfo.style.display = 'none';
+          compatibilityWarning.style.display = 'none';
+        }
+
+        // 如果需要迁移，先迁移数据
+        if (compatibility.level === 'warning') {
+          data = backupManager.migrateData(data);
         }
 
         // 存储待导入数据
-        this.pendingImportData = data.secrets || data;
+        this.pendingImportData = data.secrets;
 
         // 显示恢复选项对话框
         document.getElementById('importCount').textContent = this.pendingImportData.length;
@@ -1003,31 +1026,11 @@ class TwoFAApp {
    * 验证备份数据格式
    */
   validateBackupData(data) {
-    if (!data || typeof data !== 'object') return false;
-
-    // 检查格式标识
-    if (data.format === 'openpass-backup') {
-      // 新格式 (formatVersion: 1+)
-      if (!Array.isArray(data.secrets)) return false;
-    } else if (data.version === '2.0' || data.version === '1.0') {
-      // 旧格式兼容 (totppass-backup 或早期格式)
-      if (!Array.isArray(data.secrets)) return false;
-    } else if (Array.isArray(data)) {
-      // 最简格式：直接是数组
-      return this.validateSecretsArray(data);
-    } else if (Array.isArray(data.secrets)) {
-      // 兼容其他包含 secrets 字段的格式
-    } else {
+    const result = backupManager.validateBackup(data);
+    if (!result.valid) {
+      console.error('备份验证失败:', result.error);
       return false;
     }
-
-    // 验证每个密钥
-    const secrets = data.secrets || data;
-    for (const secret of secrets) {
-      if (!secret.secret || !secret.site) return false;
-      if (typeof secret.secret !== 'string' || typeof secret.site !== 'string') return false;
-    }
-
     return true;
   }
 
@@ -1053,19 +1056,8 @@ class TwoFAApp {
 
     // 验证密码
     await this.verifyPasswordForAction('导出', async () => {
-      // 获取应用版本
-      const manifest = chrome.runtime.getManifest();
-      const appVersion = manifest.version || '0.0.0';
-
-      const backupData = {
-        format: 'openpass-backup',
-        formatVersion: 1,
-        appVersion: appVersion,
-        exportTime: new Date().toISOString(),
-        count: this.secrets.length,
-        encrypted: false,
-        secrets: this.secrets
-      };
+      // 使用备份管理器创建备份
+      const backupData = backupManager.createBackup(this.secrets);
 
       const json = JSON.stringify(backupData, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
