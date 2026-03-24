@@ -251,6 +251,82 @@
               </div>
             </div>
           </div>
+
+          <div class="settings-section">
+            <h3>自动备份</h3>
+            <p class="settings-desc">定时自动备份密钥数据，防止数据丢失</p>
+
+            <div class="settings-item">
+              <div class="settings-item-info">
+                <span class="settings-item-label">启用自动备份</span>
+                <span class="settings-item-desc">按设定频率自动创建备份</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="enableAutoBackup">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div id="autoBackupSettings" class="settings-subsection" style="display: none;">
+              <div class="form-group">
+                <label for="backupFrequency">备份频率</label>
+                <select id="backupFrequency" class="form-select">
+                  <option value="daily">每天</option>
+                  <option value="weekly" selected>每周</option>
+                  <option value="monthly">每月</option>
+                </select>
+              </div>
+
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <span class="settings-item-label">本地快照</span>
+                  <span class="settings-item-desc">在浏览器中保留最近 5 个备份版本</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="enableLocalSnapshot" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <span class="settings-item-label">自动保存到本地目录</span>
+                  <span class="settings-item-desc">授权目录后自动写入备份文件（需 Chrome 86+）</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="enableDirectoryBackup">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div id="directoryBackupSection" style="display: none;">
+                <div class="directory-status">
+                  <span id="backupDirectoryStatus">未选择目录</span>
+                  <button id="selectBackupDirectoryBtn" class="btn-secondary btn-sm">选择目录</button>
+                </div>
+              </div>
+
+              <div class="auto-backup-info">
+                <div class="info-item">
+                  <span class="info-label">上次备份</span>
+                  <span class="info-value" id="lastBackupTime">从未备份</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">下次备份</span>
+                  <span class="info-value" id="nextBackupTime">-</span>
+                </div>
+              </div>
+
+              <button id="backupNowBtn" class="btn-secondary" style="margin-top: 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                立即备份
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -483,6 +559,7 @@
   <script src="crypto.js"></script>
   <script src="totp.js"></script>
   <script src="backup-manager.js"></script>
+  <script src="auto-backup.js"></script>
   <script src="manager.js"></script>
 </body>
 </html>

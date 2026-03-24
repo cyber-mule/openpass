@@ -461,6 +461,150 @@ class ManagerApp {
 
       this.showToast('备份密码已保存', 'success');
     });
+
+    // 自动备份设置
+    this.initAutoBackupSettings();
+  }
+
+  /**
+   * 初始化自动备份设置
+   */
+  async initAutoBackupSettings() {
+    const enableAutoBackup = document.getElementById('enableAutoBackup');
+    const autoBackupSettings = document.getElementById('autoBackupSettings');
+    const backupFrequency = document.getElementById('backupFrequency');
+    const enableLocalSnapshot = document.getElementById('enableLocalSnapshot');
+    const enableDirectoryBackup = document.getElementById('enableDirectoryBackup');
+    const directoryBackupSection = document.getElementById('directoryBackupSection');
+    const selectBackupDirectoryBtn = document.getElementById('selectBackupDirectoryBtn');
+    const backupDirectoryStatus = document.getElementById('backupDirectoryStatus');
+    const backupNowBtn = document.getElementById('backupNowBtn');
+    const lastBackupTime = document.getElementById('lastBackupTime');
+    const nextBackupTime = document.getElementById('nextBackupTime');
+
+    // 加载当前设置
+    const settings = await autoBackupManager.getSettings();
+    enableAutoBackup.checked = settings.enabled;
+    backupFrequency.value = settings.frequency;
+    enableLocalSnapshot.checked = settings.localSnapshot;
+    enableDirectoryBackup.checked = settings.directoryBackup;
+
+    // 显示/隐藏设置区域
+    autoBackupSettings.style.display = settings.enabled ? 'block' : 'none';
+    directoryBackupSection.style.display = settings.directoryBackup ? 'block' : 'none';
+
+    // 更新时间显示
+    lastBackupTime.textContent = autoBackupManager.formatTime(settings.lastBackupTime);
+    nextBackupTime.textContent = autoBackupManager.formatTime(settings.nextBackupTime);
+
+    // 检查目录句柄状态
+    if (settings.directoryBackup && settings.directoryHandle) {
+      backupDirectoryStatus.textContent = `已选择: ${settings.directoryHandle}`;
+    }
+
+    // 启用/禁用自动备份
+    enableAutoBackup.addEventListener('change', async (e) => {
+      const enabled = e.target.checked;
+      autoBackupSettings.style.display = enabled ? 'block' : 'none';
+
+      if (enabled) {
+        await autoBackupManager.setupAlarm(backupFrequency.value);
+        const newSettings = await autoBackupManager.getSettings();
+        nextBackupTime.textContent = autoBackupManager.formatTime(newSettings.nextBackupTime);
+      } else {
+        await autoBackupManager.clearAlarm();
+        nextBackupTime.textContent = '-';
+      }
+
+      await autoBackupManager.saveSettings({ enabled });
+      this.showToast(enabled ? '已启用自动备份' : '已禁用自动备份', 'success');
+    });
+
+    // 备份频率
+    backupFrequency.addEventListener('change', async (e) => {
+      const frequency = e.target.value;
+      await autoBackupManager.saveSettings({ frequency });
+
+      if (enableAutoBackup.checked) {
+        await autoBackupManager.setupAlarm(frequency);
+        const newSettings = await autoBackupManager.getSettings();
+        nextBackupTime.textContent = autoBackupManager.formatTime(newSettings.nextBackupTime);
+      }
+    });
+
+    // 本地快照开关
+    enableLocalSnapshot.addEventListener('change', async (e) => {
+      await autoBackupManager.saveSettings({ localSnapshot: e.target.checked });
+    });
+
+    // 目录备份开关
+    enableDirectoryBackup.addEventListener('change', async (e) => {
+      const enabled = e.target.checked;
+      directoryBackupSection.style.display = enabled ? 'block' : 'none';
+      await autoBackupManager.saveSettings({ directoryBackup: enabled });
+
+      if (!enabled) {
+        backupDirectoryStatus.textContent = '未选择目录';
+      }
+    });
+
+    // 选择备份目录
+    selectBackupDirectoryBtn.addEventListener('click', async () => {
+      const result = await autoBackupManager.selectDirectory();
+
+      if (result.success) {
+        backupDirectoryStatus.textContent = `已选择: ${result.name}`;
+        this.showToast('目录选择成功', 'success');
+      } else {
+        this.showToast(result.error || '选择失败', 'error');
+      }
+    });
+
+    // 立即备份
+    backupNowBtn.addEventListener('click', async () => {
+      if (this.secrets.length === 0) {
+        this.showToast('没有可备份的密钥', 'error');
+        return;
+      }
+
+      // 获取加密设置
+      const encryptionSettings = await backupManager.getEncryptionSettings();
+      let password = null;
+
+      if (encryptionSettings.enabled) {
+        if (encryptionSettings.useMasterPassword) {
+          password = await this.getSessionKey();
+          if (!password) {
+            this.showToast('请先验证主密码', 'error');
+            return;
+          }
+        } else if (encryptionSettings.encryptedPassword) {
+          const sessionKey = await this.getSessionKey();
+          if (!sessionKey) {
+            this.showToast('请先验证主密码', 'error');
+            return;
+          }
+          password = await CryptoUtils.decrypt(encryptionSettings.encryptedPassword, sessionKey);
+        }
+      }
+
+      // 执行备份
+      const results = await autoBackupManager.performBackup(this.secrets, { password });
+
+      // 更新显示
+      lastBackupTime.textContent = autoBackupManager.formatTime(results.timestamp);
+
+      // 显示结果
+      const messages = [];
+      if (results.snapshot) messages.push('本地快照已保存');
+      if (results.directory?.success) messages.push(`文件已保存: ${results.directory.filename}`);
+
+      if (messages.length > 0) {
+        this.showToast(messages.join('，'), 'success');
+      } else if (results.directory && !results.directory.success) {
+        this.showToast(results.directory.error || '备份失败', 'error');
+      }
+    });
   }
 
   /**

@@ -63,6 +63,7 @@ jobs:
           cp crypto.js build/openpass/
           cp jsQR.min.js build/openpass/
           cp backup-manager.js build/openpass/
+          cp auto-backup.js build/openpass/
 
           # Popup 页面
           cp popup.html build/openpass/

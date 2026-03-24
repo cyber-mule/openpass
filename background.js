@@ -372,3 +372,90 @@ async function updateBadgeForTab(tabId, url) {
     }
   });
 }
+
+/**
+ * 自动备份定时器处理
+ */
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'openpass-auto-backup') {
+    console.log('OpenPass: 执行自动备份...');
+
+    try {
+      // 检查是否启用自动备份
+      const settings = await chrome.storage.local.get([
+        'enableAutoBackup',
+        'enableLocalSnapshot',
+        'enableDirectoryBackup',
+        'encryptedSecrets',
+        'secrets'
+      ]);
+
+      if (!settings.enableAutoBackup) {
+        console.log('OpenPass: 自动备份未启用');
+        return;
+      }
+
+      // 获取密钥（需要解密）
+      let secrets = [];
+      if (settings.encryptedSecrets) {
+        // 需要会话密钥，但在 Service Worker 中无法获取
+        // 所以自动备份只能备份明文存储的密钥或需要用户交互
+        console.log('OpenPass: 密钥已加密，需要用户交互才能备份');
+        showNotification('自动备份提醒', '请打开 OpenPass 完成备份');
+        return;
+      } else if (settings.secrets) {
+        secrets = settings.secrets;
+      }
+
+      if (secrets.length === 0) {
+        console.log('OpenPass: 没有密钥需要备份');
+        return;
+      }
+
+      // 创建备份数据
+      const backupData = {
+        format: 'openpass-backup',
+        formatVersion: 1,
+        appVersion: chrome.runtime.getManifest().version,
+        exportTime: new Date().toISOString(),
+        count: secrets.length,
+        encrypted: false,
+        secrets: secrets
+      };
+
+      // 保存本地快照
+      if (settings.enableLocalSnapshot) {
+        const result = await chrome.storage.local.get(['backupSnapshots']);
+        let snapshots = result.backupSnapshots || [];
+
+        snapshots.unshift({
+          data: backupData,
+          timestamp: new Date().toISOString(),
+          count: backupData.count
+        });
+
+        // 保留最近 5 个
+        if (snapshots.length > 5) {
+          snapshots = snapshots.slice(0, 5);
+        }
+
+        await chrome.storage.local.set({ backupSnapshots: snapshots });
+      }
+
+      // 更新备份时间
+      await chrome.storage.local.set({
+        lastBackupTime: new Date().toISOString()
+      });
+
+      console.log('OpenPass: 自动备份完成');
+
+      // 显示通知
+      if (settings.enableLocalSnapshot) {
+        showNotification('自动备份完成', `已备份 ${secrets.length} 个密钥到本地快照`);
+      }
+    } catch (error) {
+      console.error('OpenPass: 自动备份失败', error);
+      showNotification('自动备份失败', error.message);
+    }
+  }
+});
