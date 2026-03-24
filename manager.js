@@ -1580,9 +1580,9 @@ class ManagerApp {
     dialog.className = 'confirm-dialog';
     dialog.innerHTML = `
       <div class="confirm-dialog-content">
-        <h3 class="confirm-dialog-title">⚠️ 清除所有数据</h3>
+        <h3 class="confirm-dialog-title">⚠️ 清空所有密钥</h3>
         <p class="confirm-dialog-message">
-          此操作将删除所有密钥、设置和备份快照，恢复到初始状态。<br>
+          此操作将删除所有已保存的密钥和备份快照。<br>
           <strong>此操作不可撤销！</strong>
         </p>
         <div class="confirm-dialog-input">
@@ -1591,7 +1591,7 @@ class ManagerApp {
         </div>
         <div class="confirm-dialog-actions">
           <button class="btn-secondary" id="cancelClearBtn">取消</button>
-          <button class="btn-danger" id="confirmClearBtn" disabled>确认清除</button>
+          <button class="btn-danger" id="confirmClearBtn" disabled>确认清空</button>
         </div>
       </div>
     `;
@@ -1622,41 +1622,44 @@ class ManagerApp {
     // 确认清除
     confirmBtn.addEventListener('click', async () => {
       confirmBtn.disabled = true;
-      confirmBtn.textContent = '清除中...';
+      confirmBtn.textContent = '清空中...';
 
       try {
-        await this.clearAllData();
+        await this.clearAllSecrets();
         dialog.remove();
-        this.showToast('数据已清除', 'success');
+        this.showToast('密钥已清空', 'success');
 
-        // 刷新页面，重新开始引导
-        setTimeout(() => {
-          window.location.reload();
-        }, 1000);
+        // 刷新列表
+        this.secrets = [];
+        this.renderSecretsTable();
+        document.getElementById('totalCount').textContent = '0';
       } catch (error) {
-        console.error('清除数据失败:', error);
-        this.showToast('清除失败', 'error');
+        console.error('清空密钥失败:', error);
+        this.showToast('清空失败', 'error');
         confirmBtn.disabled = false;
-        confirmBtn.textContent = '确认清除';
+        confirmBtn.textContent = '确认清空';
       }
     });
   }
 
   /**
-   * 清除所有数据
+   * 清空所有密钥
    */
-  async clearAllData() {
-    // 清除 chrome.storage.local
-    await chrome.storage.local.clear();
+  async clearAllSecrets() {
+    // 只清除密钥相关数据，保留设置
+    await chrome.storage.local.remove([
+      'secrets',
+      'sitesList',
+      'encryptedSecrets',
+      'backupSnapshots',
+      'lastBackupTime'
+    ]);
 
-    // 清除 chrome.storage.session
-    await chrome.storage.session.clear();
-
-    // 清除 IndexedDB（目录句柄）
+    // 清除 IndexedDB 中的备份快照
     return new Promise((resolve) => {
       const request = indexedDB.deleteDatabase('OpenPassBackupDB');
       request.onsuccess = () => resolve();
-      request.onerror = () => resolve(); // 即使失败也继续
+      request.onerror = () => resolve();
     });
   }
 }
