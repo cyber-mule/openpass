@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenPass 用户指南</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #1a1a2e;
+      background: #f8fafc;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    /* 封面 */
+    .cover {
+      text-align: center;
+      padding: 60px 20px;
+      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      color: white;
+      border-radius: 16px;
+      margin-bottom: 40px;
+    }
+
+    .cover-icon {
+      width: 80px;
+      height: 80px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+    }
+
+    .cover-icon svg {
+      width: 48px;
+      height: 48px;
+    }
+
+    .cover h1 {
+      font-size: 36px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .cover p {
+      font-size: 18px;
+      opacity: 0.9;
+    }
+
+    .cover-version {
+      margin-top: 20px;
+      padding: 8px 16px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      display: inline-block;
+      font-size: 14px;
+    }
+
+    /* 章节 */
+    .section {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .section-title {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-title .icon {
+      width: 32px;
+      height: 32px;
+      background: #eff6ff;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #3b82f6;
+    }
+
+    /* 步骤 */
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+      background: #f8fafc;
+      border-radius: 8px;
+      border-left: 4px solid #3b82f6;
+    }
+
+    .step-number {
+      width: 32px;
+      height: 32px;
+      background: #3b82f6;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .step-content h4 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .step-content p {
+      font-size: 14px;
+      color: #64748b;
+    }
+
+    /* 功能卡片 */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .feature-card {
+      padding: 20px;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+    }
+
+    .feature-card h4 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: #64748b;
+    }
+
+    /* 快捷键表格 */
+    .shortcuts-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .shortcuts-table th,
+    .shortcuts-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .shortcuts-table th {
+      background: #f8fafc;
+      font-weight: 600;
+      font-size: 14px;
+      color: #64748b;
+    }
+
+    .shortcuts-table td {
+      font-size: 14px;
+    }
+
+    .shortcuts-table kbd {
+      display: inline-block;
+      padding: 4px 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 500;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      box-shadow: inset 0 -1px 0 #e2e8f0;
+    }
+
+    /* 提示框 */
+    .tip {
+      padding: 16px;
+      background: #eff6ff;
+      border-radius: 8px;
+      border-left: 4px solid #3b82f6;
+      margin: 16px 0;
+    }
+
+    .tip-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #1d4ed8;
+    }
+
+    .tip p {
+      font-size: 14px;
+      color: #1e40af;
+    }
+
+    .warning {
+      background: #fef3c7;
+      border-left-color: #f59e0b;
+    }
+
+    .warning .tip-title {
+      color: #b45309;
+    }
+
+    .warning p {
+      color: #92400e;
+    }
+
+    /* 截图占位 */
+    .screenshot {
+      background: #f1f5f9;
+      border: 2px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      margin: 16px 0;
+    }
+
+    .screenshot-placeholder {
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    /* 页脚 */
+    .footer {
+      text-align: center;
+      padding: 40px 20px;
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .footer a {
+      color: #3b82f6;
+      text-decoration: none;
+    }
+
+    /* 分页 */
+    .page-break {
+      page-break-after: always;
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+      .container {
+        max-width: 100%;
+        padding: 20px;
+      }
+      .section {
+        box-shadow: none;
+        border: 1px solid #e2e8f0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 封面 -->
+    <div class="cover">
+      <div class="cover-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+      </div>
+      <h1>OpenPass</h1>
+      <p>简洁、本地、安全的两步验证管理器</p>
+      <div class="cover-version">用户指南 v0.0.1</div>
+    </div>
+
+    <!-- 简介 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </span>
+        产品简介
+      </h2>
+      <p style="margin-bottom: 16px;">
+        OpenPass 是一款 Chrome 浏览器扩展，用于管理 TOTP 两步验证密钥。所有数据存储在本地，无需联网，保护您的隐私安全。
+      </p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            本地存储
+          </h4>
+          <p>所有密钥存储在浏览器本地，不上传任何数据</p>
+        </div>
+        <div class="feature-card">
+          <h4>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            加密保护
+          </h4>
+          <p>主密码加密，AES-256-GCM 算法保护数据安全</p>
+        </div>
+        <div class="feature-card">
+          <h4>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            自动备份
+          </h4>
+          <p>支持本地快照和目录备份，防止数据丢失</p>
+        </div>
+        <div class="feature-card">
+          <h4>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            自动填充
+          </h4>
+          <p>检测登录页面，自动填充验证码</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- 快速开始 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </span>
+        快速开始
+      </h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>安装扩展</h4>
+            <p>从 Chrome 应用商店安装 OpenPass 扩展，或加载已解压的扩展程序</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>设置主密码</h4>
+            <p>首次打开会显示欢迎引导，设置一个强密码作为主密码</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>添加密钥</h4>
+            <p>点击「添加密钥」按钮，输入 TOTP 密钥（通常由网站提供）</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h4>使用验证码</h4>
+            <p>点击密钥行可复制验证码，或访问登录页面自动填充</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 添加密钥 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </span>
+        添加密钥
+      </h2>
+      <p style="margin-bottom: 16px;">支持三种方式添加 TOTP 密钥：</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>手动输入</h4>
+            <p>点击添加按钮，输入密钥、站点名称等信息</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>扫描二维码</h4>
+            <p>点击二维码图标，使用摄像头扫描网站提供的二维码</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>导入备份</h4>
+            <p>从备份文件恢复密钥，支持加密备份</p>
+          </div>
+        </div>
+      </div>
+      <div class="tip">
+        <div class="tip-title">提示</div>
+        <p>密钥格式为 Base32 编码的字符串，通常由网站在启用两步验证时提供。</p>
+      </div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- 键盘快捷键 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+            <path d="M6 8h.001"></path>
+            <path d="M10 8h.001"></path>
+            <path d="M14 8h.001"></path>
+            <path d="M18 8h.001"></path>
+            <path d="M8 12h.001"></path>
+            <path d="M12 12h.001"></path>
+            <path d="M16 12h.001"></path>
+            <path d="M7 16h10"></path>
+          </svg>
+        </span>
+        键盘快捷键
+      </h2>
+      <table class="shortcuts-table">
+        <thead>
+          <tr>
+            <th>快捷键</th>
+            <th>功能</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><kbd>/</kbd> 或 <kbd>Ctrl</kbd>+<kbd>F</kbd></td>
+            <td>搜索密钥</td>
+          </tr>
+          <tr>
+            <td><kbd>N</kbd> 或 <kbd>Ctrl</kbd>+<kbd>N</kbd></td>
+            <td>添加密钥</td>
+          </tr>
+          <tr>
+            <td><kbd>Ctrl</kbd>+<kbd>,</kbd></td>
+            <td>打开设置</td>
+          </tr>
+          <tr>
+            <td><kbd>?</kbd></td>
+            <td>显示快捷键帮助</td>
+          </tr>
+          <tr>
+            <td><kbd>↑</kbd> / <kbd>↓</kbd></td>
+            <td>选择上/下一条密钥</td>
+          </tr>
+          <tr>
+            <td><kbd>Enter</kbd></td>
+            <td>复制选中密钥的验证码</td>
+          </tr>
+          <tr>
+            <td><kbd>E</kbd></td>
+            <td>编辑选中密钥</td>
+          </tr>
+          <tr>
+            <td><kbd>Delete</kbd></td>
+            <td>删除选中密钥</td>
+          </tr>
+          <tr>
+            <td><kbd>Escape</kbd></td>
+            <td>取消/关闭模态框</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 备份与恢复 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+        </span>
+        备份与恢复
+      </h2>
+      <h4 style="margin-bottom: 12px;">自动备份</h4>
+      <p style="margin-bottom: 16px; color: #64748b;">在设置页面可以配置自动备份：</p>
+      <ul style="margin-left: 20px; margin-bottom: 20px; color: #64748b;">
+        <li>本地快照：保留最近 5 个版本</li>
+        <li>目录备份：备份到指定文件夹</li>
+        <li>备份频率：每天/每周/每月</li>
+      </ul>
+      <h4 style="margin-bottom: 12px;">手动备份</h4>
+      <p style="margin-bottom: 16px; color: #64748b;">点击「立即备份」按钮，导出加密备份文件。</p>
+      <h4 style="margin-bottom: 12px;">恢复备份</h4>
+      <p style="color: #64748b;">在设置页面点击「导入备份」，选择备份文件即可恢复。</p>
+      <div class="tip warning" style="margin-top: 16px;">
+        <div class="tip-title">注意</div>
+        <p>恢复备份时，重复的密钥可以选择跳过、覆盖或保留两者。</p>
+      </div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- 安全设置 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          </svg>
+        </span>
+        安全设置
+      </h2>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>主密码</h4>
+          <p>用于加密数据和验证身份，请务必牢记</p>
+        </div>
+        <div class="feature-card">
+          <h4>会话超时</h4>
+          <p>15 分钟无操作自动锁定，可在设置中调整</p>
+        </div>
+        <div class="feature-card">
+          <h4>备份加密</h4>
+          <p>可使用主密码或单独密码加密备份文件</p>
+        </div>
+        <div class="feature-card">
+          <h4>修改密码</h4>
+          <p>在设置页面可以修改主密码</p>
+        </div>
+      </div>
+      <div class="tip warning" style="margin-top: 16px;">
+        <div class="tip-title">重要提示</div>
+        <p>主密码无法找回，如果忘记需要重置所有数据。</p>
+      </div>
+    </div>
+
+    <!-- 常见问题 -->
+    <div class="section">
+      <h2 class="section-title">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </span>
+        常见问题
+      </h2>
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div>
+          <h4 style="margin-bottom: 4px;">Q: 验证码显示不正确？</h4>
+          <p style="color: #64748b;">A: 请检查设备时间是否正确，TOTP 验证码依赖精确的时间同步。</p>
+        </div>
+        <div>
+          <h4 style="margin-bottom: 4px;">Q: 如何在多设备同步？</h4>
+          <p style="color: #64748b;">A: 导出备份文件，在另一台设备导入即可。不支持云同步。</p>
+        </div>
+        <div>
+          <h4 style="margin-bottom: 4px;">Q: 忘记主密码怎么办？</h4>
+          <p style="color: #64748b;">A: 主密码无法找回，需要在设置中重置所有数据。</p>
+        </div>
+        <div>
+          <h4 style="margin-bottom: 4px;">Q: 自动填充不工作？</h4>
+          <p style="color: #64748b;">A: 确保已授予扩展访问网站的权限，并检查站点名称是否匹配。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="footer">
+      <p>OpenPass - 开源两步验证管理器</p>
+      <p style="margin-top: 8px;">
+        <a href="https://github.com/cyber-mule/openpass" target="_blank">GitHub</a> · 
+        <a href="https://github.com/cyber-mule/openpass/issues" target="_blank">问题反馈</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>
