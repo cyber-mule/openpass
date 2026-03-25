@@ -953,6 +953,9 @@ class ManagerApp {
       // 立即显示加载状态
       this.showLoadingToast('正在读取备份文件...');
 
+      // 等待一帧确保加载提示渲染
+      await new Promise(resolve => requestAnimationFrame(resolve));
+
       try {
         const text = await file.text();
         let data = JSON.parse(text);
