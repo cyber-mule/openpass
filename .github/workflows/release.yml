@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine tag
         id: tag
@@ -33,21 +35,6 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Release tag: $TAG"
 
-      - name: Update version in manifest.json
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          VERSION="${TAG#v}"
-          node -e "
-            const fs = require('fs');
-            const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-            manifest.version = '$VERSION';
-            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2));
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-          echo "Updated version to $VERSION in manifest.json and package.json"
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,7 +43,8 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          VERSION=$(node -p "require('./manifest.json').version")
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
           BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
           COMMIT_HASH="${{ github.sha }}"
 
@@ -65,20 +53,24 @@ jobs:
           echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
 
           echo "Building version: $VERSION"
-          echo "Release tag: ${{ steps.tag.outputs.tag }}"
+          echo "Release tag: $TAG"
           echo "Build time: $BUILD_TIME"
           echo "Commit: $COMMIT_HASH"
 
-      - name: Inject build signature
+      - name: Update version and inject build signature
         run: |
           node -e "
             const fs = require('fs');
             const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            manifest.version = '${{ steps.version.outputs.version }}';
             manifest.build_time = '${{ steps.version.outputs.build_time }}';
             manifest.commit_hash = '${{ steps.version.outputs.commit_hash }}';
             fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2));
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ steps.version.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           "
-          echo "Build signature injected into manifest.json"
+          echo "Updated version to ${{ steps.version.outputs.version }}"
 
       - name: Build extension
         run: |
@@ -117,19 +109,69 @@ jobs:
           cp content.css build/openpass/
 
           # 打包为 zip
+          TAG="${{ steps.tag.outputs.tag }}"
           cd build
-          zip -r ../${{ steps.tag.outputs.tag }}.zip openpass
+          zip -r ../${TAG}.zip openpass
           cd ..
 
           echo "Extension packaged successfully"
           ls -la *.zip
 
+      - name: Build Changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          configuration: |
+            {
+              "categories": [
+                {
+                  "title": "## 🚀 新功能",
+                  "labels": ["feat", "feature"]
+                },
+                {
+                  "title": "## 🐛 Bug 修复",
+                  "labels": ["fix", "bugfix"]
+                },
+                {
+                  "title": "## 📝 文档",
+                  "labels": ["docs", "doc"]
+                },
+                {
+                  "title": "## 🔧 维护",
+                  "labels": ["chore", "refactor", "perf", "style", "test", "ci"]
+                }
+              ],
+              "label_extractor": [
+                {
+                  "pattern": "^(feat|feature):(.*)$",
+                  "target": "feat"
+                },
+                {
+                  "pattern": "^(fix|bugfix):(.*)$",
+                  "target": "fix"
+                },
+                {
+                  "pattern": "^(docs|doc):(.*)$",
+                  "target": "docs"
+                },
+                {
+                  "pattern": "^(chore|refactor|perf|style|test|ci):(.*)$",
+                  "target": "chore"
+                }
+              ],
+              "template": "#{{CHANGELOG}}\n\n**Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/#{{FROM_TAG}}...#{{TO_TAG}}",
+              "pr_template": "- #{{TITLE}} (#{{SHA}})",
+              "empty_template": "- No changes"
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
-          generate_release_notes: true
+          name: ${{ steps.tag.outputs.tag }}
+          body: ${{ steps.changelog.outputs.changelog }}
           files: ${{ steps.tag.outputs.tag }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
