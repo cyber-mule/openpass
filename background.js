@@ -240,6 +240,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // 监听标签页切换
 chrome.tabs.onActivated.addListener((activeInfo) => {
   chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (chrome.runtime.lastError) {
+      // 标签页已关闭，忽略
+      return;
+    }
     if (tab && tab.url) {
       updateBadgeForTab(activeInfo.tabId, tab.url);
     }
@@ -326,12 +330,30 @@ function matchSecrets(url, secrets) {
 }
 
 /**
+ * 安全地设置 badge（忽略标签页已关闭的错误）
+ */
+function safeSetBadge(tabId, text, color = null) {
+  chrome.action.setBadgeText({ tabId, text }, () => {
+    if (chrome.runtime.lastError) {
+      // 标签页已关闭，忽略错误
+    }
+  });
+  if (color) {
+    chrome.action.setBadgeBackgroundColor({ tabId, color }, () => {
+      if (chrome.runtime.lastError) {
+        // 标签页已关闭，忽略错误
+      }
+    });
+  }
+}
+
+/**
  * 更新指定标签页的 badge
  */
 async function updateBadgeForTab(tabId, url) {
   // 跳过特殊页面
   if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('about:')) {
-    chrome.action.setBadgeText({ tabId, text: '' });
+    safeSetBadge(tabId, '');
     return;
   }
 
@@ -347,7 +369,7 @@ async function updateBadgeForTab(tabId, url) {
 
     const urlInfo = parseUrl(url);
     if (!urlInfo) {
-      chrome.action.setBadgeText({ tabId, text: '' });
+      safeSetBadge(tabId, '');
       return;
     }
 
@@ -365,10 +387,9 @@ async function updateBadgeForTab(tabId, url) {
     }
 
     if (matchCount > 0) {
-      chrome.action.setBadgeText({ tabId, text: matchCount.toString() });
-      chrome.action.setBadgeBackgroundColor({ tabId, color: '#4f46e5' });
+      safeSetBadge(tabId, matchCount.toString(), '#4f46e5');
     } else {
-      chrome.action.setBadgeText({ tabId, text: '' });
+      safeSetBadge(tabId, '');
     }
   });
 }
