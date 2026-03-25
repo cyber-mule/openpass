@@ -55,7 +55,18 @@ jobs:
           # 创建构建目录
           mkdir -p build/openpass
 
-          # 复制所有必要文件
+          # ========================================
+          # 复制扩展必需文件（不包含以下目录）：
+          # - docs/        : 文档，不需要打包
+          # - scripts/     : 构建脚本，不需要打包
+          # - .github/     : CI 配置，不需要打包
+          # - node_modules/: 依赖，不需要打包
+          # - *.md         : 文档文件，不需要打包
+          # - logo.png     : 项目 logo，扩展未使用
+          # - package.json : 构建依赖，不需要打包
+          # ========================================
+
+          # 核心文件
           cp -r icons build/openpass/
           cp manifest.json build/openpass/
           cp background.js build/openpass/
@@ -94,6 +105,10 @@ jobs:
 
           echo "Extension packaged successfully"
           ls -la *.zip
+
+          # 显示打包内容
+          echo "Package contents:"
+          unzip -l ${{ steps.version.outputs.tag_name }}.zip
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
