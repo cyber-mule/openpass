@@ -950,6 +950,9 @@ class ManagerApp {
       const file = e.target.files[0];
       if (!file) return;
 
+      // 立即显示加载状态
+      this.showLoadingToast('正在读取备份文件...');
+
       try {
         const text = await file.text();
         let data = JSON.parse(text);
@@ -957,6 +960,7 @@ class ManagerApp {
         // 验证备份格式
         const validationResult = backupManager.validateBackup(data);
         if (!validationResult.valid) {
+          this.hideLoadingToast();
           this.showToast(validationResult.error || '备份文件格式无效', 'error');
           return;
         }
@@ -965,6 +969,9 @@ class ManagerApp {
         // 存储备份数据供后续使用
         this.pendingBackupData = data;
         this.isEncryptedBackup = validationResult.encrypted;
+
+        // 隐藏加载状态
+        this.hideLoadingToast();
 
         // 显示备份信息
         const backupInfo = document.getElementById('backupInfo');
@@ -2021,6 +2028,37 @@ class ManagerApp {
     setTimeout(() => {
       toast.classList.remove('show');
     }, 3000);
+  }
+
+  /**
+   * 显示加载提示
+   */
+  showLoadingToast(message) {
+    // 移除已有的加载提示
+    this.hideLoadingToast();
+
+    const toast = document.createElement('div');
+    toast.id = 'loadingToast';
+    toast.className = 'loading-toast';
+    toast.innerHTML = `
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <span class="loading-text">${message}</span>
+      </div>
+    `;
+
+    document.body.appendChild(toast);
+    return toast;
+  }
+
+  /**
+   * 隐藏加载提示
+   */
+  hideLoadingToast() {
+    const toast = document.getElementById('loadingToast');
+    if (toast) {
+      toast.remove();
+    }
   }
 
   /**
