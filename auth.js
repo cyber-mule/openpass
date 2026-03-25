@@ -1,5 +1,5 @@
 /**
- * TOTPPass - 认证页面逻辑
+ * OpenPass - 认证页面逻辑
  */
 
 document.addEventListener('DOMContentLoaded', () => {

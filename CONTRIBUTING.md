@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你考虑为 TOTPPass 做出贡献！
+感谢你考虑为 OpenPass 做出贡献！
 
 ## 目录
 
@@ -19,7 +19,7 @@
 
 ### 报告 Bug
 
-如果你发现了 Bug，请通过 [Issues](https://github.com/cyber-mule/totppass/issues) 提交报告。
+如果你发现了 Bug，请通过 [Issues](https://github.com/cyber-mule/openpass/issues) 提交报告。
 
 提交 Bug 报告前，请：
 
@@ -29,7 +29,7 @@
 
 ### 提出新功能
 
-如果你有新功能建议，欢迎通过 [Issues](https://github.com/cyber-mule/totppass/issues) 提交。
+如果你有新功能建议，欢迎通过 [Issues](https://github.com/cyber-mule/openpass/issues) 提交。
 
 提交功能请求时，请：
 
@@ -51,8 +51,8 @@
 
 1. 克隆仓库
    ```bash
-   git clone https://github.com/cyber-mule/totppass.git
-   cd totppass
+   git clone https://github.com/cyber-mule/openpass.git
+   cd openpass
    ```
 
 2. 在 Chrome 中加载扩展
@@ -64,7 +64,7 @@
 ### 项目结构
 
 ```
-totppass/
+openpass/
 ├── .github/              # GitHub 配置
 │   ├── ISSUE_TEMPLATE/   # Issue 模板
 │   └── workflows/        # GitHub Actions

@@ -1,0 +1,26 @@
+{
+  "name": "2fa",
+  "version": "1.0.0",
+  "description": "> 开源、本地、安全的两步验证管理器",
+  "main": "auth.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyber-mule/openpass.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/cyber-mule/openpass/issues"
+  },
+  "homepage": "https://github.com/cyber-mule/openpass#readme",
+  "devDependencies": {
+    "puppeteer-core": "^24.40.0"
+  }
+}

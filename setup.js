@@ -1,5 +1,5 @@
 /**
- * TOTPPass - 主密码设置页面逻辑
+ * OpenPass - 主密码设置页面逻辑
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -53,6 +53,14 @@ document.addEventListener('DOMContentLoaded', () => {
       confirmError.textContent = '两次输入的密码不一致';
     } else {
       confirmError.textContent = '';
+    }
+  });
+
+  // 主密码输入框 Enter 跳转到确认框
+  passwordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmInput.focus();
     }
   });
 

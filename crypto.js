@@ -1,5 +1,5 @@
 /**
- * TOTPPass - 加密工具模块
+ * OpenPass - 加密工具模块
  * 使用 Web Crypto API 实现 AES-GCM 加密
  */
 
