@@ -56,6 +56,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // 主密码输入框 Enter 跳转到确认框
+  passwordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmInput.focus();
+    }
+  });
+
   // 提交表单
   form.addEventListener('submit', async (e) => {
     e.preventDefault();

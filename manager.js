@@ -1012,6 +1012,13 @@ class ManagerApp {
 
         document.getElementById('currentCount').textContent = this.secrets.length;
         document.getElementById('importModal').classList.remove('hidden');
+
+        // 如果是加密备份，聚焦解密密码输入框
+        if (validationResult.encrypted) {
+          setTimeout(() => {
+            document.getElementById('decryptPassword').focus();
+          }, 100);
+        }
       } catch (err) {
         console.error('导入失败:', err);
         this.showToast('导入失败，请检查文件格式', 'error');
@@ -1741,6 +1748,11 @@ class ManagerApp {
     }
 
     modal.classList.remove('hidden');
+
+    // 聚焦第一个输入框
+    setTimeout(() => {
+      document.getElementById('secretInput').focus();
+    }, 100);
   }
 
   /**
@@ -2198,9 +2210,20 @@ class ManagerApp {
     const confirmBtn = document.getElementById('confirmClearBtn');
     const cancelBtn = document.getElementById('cancelClearBtn');
 
+    // 聚焦输入框
+    input.focus();
+
     // 输入验证
     input.addEventListener('input', () => {
       confirmBtn.disabled = input.value !== 'DELETE';
+    });
+
+    // Enter 键提交
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !confirmBtn.disabled) {
+        e.preventDefault();
+        confirmBtn.click();
+      }
     });
 
     // 取消
@@ -2269,9 +2292,20 @@ class ManagerApp {
     const confirmBtn = document.getElementById('confirmResetBtn');
     const cancelBtn = document.getElementById('cancelResetBtn');
 
+    // 聚焦输入框
+    input.focus();
+
     // 输入验证
     input.addEventListener('input', () => {
       confirmBtn.disabled = input.value !== 'RESET';
+    });
+
+    // Enter 键提交
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !confirmBtn.disabled) {
+        e.preventDefault();
+        confirmBtn.click();
+      }
     });
 
     // 取消
