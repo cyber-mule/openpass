@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TOTPPass - 密钥管理</title>
+  <title>OpenPass - 密钥管理</title>
   <link rel="stylesheet" href="manager.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>TOTPPass</span>
+          <span>OpenPass</span>
         </div>
       </div>
       
@@ -210,6 +210,149 @@
               修改主密码
             </button>
           </div>
+
+          <div class="settings-section">
+            <h3>备份加密</h3>
+            <p class="settings-desc">启用后导出的备份文件将加密存储，导入时需要输入密码解密</p>
+
+            <div class="settings-item">
+              <div class="settings-item-info">
+                <span class="settings-item-label">启用备份加密</span>
+                <span class="settings-item-desc">导出备份时加密密钥数据</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="enableBackupEncryption">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div id="backupPasswordSettings" class="settings-subsection" style="display: none;">
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <span class="settings-item-label">使用主密码作为备份密码</span>
+                  <span class="settings-item-desc">启用后将使用主密码加密备份，无需单独记忆</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="useMasterPasswordForBackup" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div id="customBackupPasswordSection" style="display: none;">
+                <div class="form-group">
+                  <label for="backupPassword">备份密码</label>
+                  <input type="password" id="backupPassword" class="form-input" placeholder="输入备份密码">
+                </div>
+                <div class="form-group">
+                  <label for="backupPasswordConfirm">确认备份密码</label>
+                  <input type="password" id="backupPasswordConfirm" class="form-input" placeholder="再次输入备份密码">
+                </div>
+                <button id="saveBackupPasswordBtn" class="btn-secondary">保存备份密码</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>自动备份</h3>
+            <p class="settings-desc">定时自动备份密钥数据，防止数据丢失</p>
+
+            <div class="settings-item">
+              <div class="settings-item-info">
+                <span class="settings-item-label">启用自动备份</span>
+                <span class="settings-item-desc">按设定频率自动创建备份</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="enableAutoBackup">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div id="autoBackupSettings" class="settings-subsection" style="display: none;">
+              <div class="form-group">
+                <label for="backupFrequency">备份频率</label>
+                <select id="backupFrequency" class="form-select">
+                  <option value="daily">每天</option>
+                  <option value="weekly" selected>每周</option>
+                  <option value="monthly">每月</option>
+                </select>
+              </div>
+
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <span class="settings-item-label">本地快照</span>
+                  <span class="settings-item-desc">在浏览器中保留最近 5 个备份版本</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="enableLocalSnapshot" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <span class="settings-item-label">自动保存到本地目录</span>
+                  <span class="settings-item-desc">授权目录后自动写入备份文件（需 Chrome 86+）</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="enableDirectoryBackup">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div id="directoryBackupSection" style="display: none;">
+                <div class="directory-status">
+                  <span id="backupDirectoryStatus">未选择目录</span>
+                  <button id="selectBackupDirectoryBtn" class="btn-secondary btn-sm">选择目录</button>
+                </div>
+                <div id="directoryPermissionStatus" class="permission-status" style="display: none;">
+                  <span class="permission-icon"></span>
+                  <span class="permission-text"></span>
+                  <button id="requestPermissionBtn" class="btn-secondary btn-sm" style="display: none;">授权</button>
+                </div>
+              </div>
+
+              <div class="auto-backup-info">
+                <div class="info-item">
+                  <span class="info-label">上次备份</span>
+                  <span class="info-value" id="lastBackupTime">从未备份</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">下次备份</span>
+                  <span class="info-value" id="nextBackupTime">-</span>
+                </div>
+              </div>
+
+              <button id="backupNowBtn" class="btn-secondary" style="margin-top: 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                立即备份
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-section danger-zone">
+            <h3>危险操作</h3>
+            <p class="settings-desc">以下操作不可撤销，请谨慎使用</p>
+
+            <div class="settings-item danger-item">
+              <div class="settings-item-info">
+                <span class="settings-item-label">清空所有密钥</span>
+                <span class="settings-item-desc">删除所有已保存的密钥和备份快照，保留其他设置</span>
+              </div>
+              <button id="clearSecretsBtn" class="btn-danger">清空密钥</button>
+            </div>
+
+            <div class="settings-item danger-item">
+              <div class="settings-item-info">
+                <span class="settings-item-label">重置所有数据</span>
+                <span class="settings-item-desc">删除所有密钥、设置、主密码，恢复到初始状态</span>
+              </div>
+              <button id="resetAllDataBtn" class="btn-danger">重置数据</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -227,18 +370,18 @@
                 <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
               </svg>
             </div>
-            <h2>TOTPPass</h2>
+            <h2>OpenPass</h2>
             <p class="about-version">v0.0.1-rc</p>
             <p class="about-desc">简洁、本地、安全的两步验证管理器</p>
 
             <div class="about-links">
-              <a href="https://github.com/cyber-mule/totppass" target="_blank" class="about-link">
+              <a href="https://github.com/cyber-mule/openpass" target="_blank" class="about-link">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
                 </svg>
                 GitHub
               </a>
-              <a href="https://github.com/cyber-mule/totppass/issues" target="_blank" class="about-link">
+              <a href="https://github.com/cyber-mule/openpass/issues" target="_blank" class="about-link">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="10"></circle>
                   <line x1="12" y1="8" x2="12" y2="12"></line>
@@ -342,7 +485,35 @@
         <h3>导入备份</h3>
       </div>
       <div class="modal-body">
-        <p>检测到备份文件包含 <strong id="importCount">0</strong> 个密钥。</p>
+        <div id="backupInfo" class="backup-info" style="display: none;">
+          <div class="backup-info-item">
+            <span class="backup-info-label">备份版本</span>
+            <span class="backup-info-value" id="backupAppVersion">-</span>
+          </div>
+          <div class="backup-info-item">
+            <span class="backup-info-label">导出时间</span>
+            <span class="backup-info-value" id="backupExportTime">-</span>
+          </div>
+        </div>
+        <div id="compatibilityWarning" class="compatibility-warning" style="display: none;"></div>
+
+        <!-- 解密密码输入 -->
+        <div id="decryptSection" class="decrypt-section" style="display: none;">
+          <div class="decrypt-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <p class="decrypt-title">此备份已加密</p>
+          <p class="decrypt-desc">请输入备份密码以解密数据</p>
+          <div class="form-group">
+            <input type="password" id="decryptPassword" class="form-input" placeholder="输入备份密码">
+            <p id="decryptError" class="form-error" style="display: none;"></p>
+          </div>
+        </div>
+
+        <p id="importCountText">检测到备份文件包含 <strong id="importCount">0</strong> 个密钥。</p>
         <p>当前已有 <strong id="currentCount">0</strong> 个密钥。</p>
         <p class="mt-4">发现重复站点时：</p>
         <div class="radio-group">
@@ -411,8 +582,90 @@
   <!-- Toast -->
   <div id="toast" class="toast"></div>
 
+  <!-- 欢迎引导模态框 -->
+  <div id="welcomeModal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content welcome-modal">
+      <div class="welcome-header">
+        <div class="welcome-icon">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2>欢迎使用 OpenPass</h2>
+        <p class="welcome-subtitle">让我们完成一些基本设置，确保你的密钥安全</p>
+      </div>
+
+      <div class="welcome-steps">
+        <!-- 步骤1：设置主密码 -->
+        <div class="welcome-step" data-step="1">
+          <div class="step-header">
+            <div class="step-number">1</div>
+            <div class="step-title">
+              <h4>设置主密码</h4>
+              <span class="step-status" id="step1Status">必填</span>
+            </div>
+          </div>
+          <div class="step-body" id="step1Body">
+            <p class="step-desc">主密码用于保护你的密钥和敏感操作，请务必牢记</p>
+            <div class="welcome-form">
+              <div class="form-group">
+                <label for="welcomePassword">主密码</label>
+                <input type="password" id="welcomePassword" class="form-input" placeholder="输入主密码" autocomplete="new-password">
+              </div>
+              <div class="form-group">
+                <label for="welcomePasswordConfirm">确认主密码</label>
+                <input type="password" id="welcomePasswordConfirm" class="form-input" placeholder="再次输入主密码" autocomplete="new-password">
+              </div>
+              <p id="welcomePasswordError" class="form-error"></p>
+              <button id="welcomeSetPasswordBtn" class="btn-primary">确认设置</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 步骤2：添加密钥 -->
+        <div class="welcome-step" data-step="2">
+          <div class="step-header">
+            <div class="step-number">2</div>
+            <div class="step-title">
+              <h4>添加第一个密钥</h4>
+              <span class="step-status" id="step2Status">推荐</span>
+            </div>
+          </div>
+          <div class="step-body collapsed" id="step2Body">
+            <p class="step-desc">添加你的第一个 TOTP 密钥开始使用</p>
+            <button id="addFirstSecretBtn" class="btn-secondary">添加密钥</button>
+          </div>
+        </div>
+
+        <!-- 步骤3：配置备份 -->
+        <div class="welcome-step" data-step="3">
+          <div class="step-header">
+            <div class="step-number">3</div>
+            <div class="step-title">
+              <h4>配置自动备份</h4>
+              <span class="step-status" id="step3Status">推荐</span>
+            </div>
+          </div>
+          <div class="step-body collapsed" id="step3Body">
+            <p class="step-desc">启用自动备份，防止数据丢失</p>
+            <button id="setupBackupBtn" class="btn-secondary">去配置</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-footer">
+        <button id="skipWelcomeBtn" class="btn-text">跳过，稍后设置</button>
+        <button id="startUsingBtn" class="btn-primary">开始使用</button>
+      </div>
+    </div>
+  </div>
+
   <script src="crypto.js"></script>
   <script src="totp.js"></script>
+  <script src="backup-manager.js"></script>
+  <script src="auto-backup.js"></script>
   <script src="manager.js"></script>
 </body>
 </html>
