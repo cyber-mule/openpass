@@ -8,8 +8,14 @@ declare module "wxt/browser" {
     | "/auth.html"
     | "/background.js"
     | "/content-scripts/content.js"
+    | "/icons/icon128.png"
+    | "/icons/icon16.png"
+    | "/icons/icon48.png"
+    | "/jsQR.min.js"
+    | "/logo.png"
     | "/options.html"
     | "/popup.html"
+    | "/totp.js"
   type HtmlPublicPath = Extract<PublicPath, `${string}.html`>
   export interface WxtRuntime {
     getURL(path: PublicPath): string;
