@@ -8,6 +8,12 @@ export default defineBackground(() => {
       title: '识别并添加',
       contexts: ['image']
     });
+
+    // 创建自动备份定时器
+    chrome.alarms.create('openpass-auto-backup', {
+      delayInMinutes: 5,
+      periodInMinutes: 60 // 每小时检查一次
+    });
   });
 
   // 监听右键菜单点击
@@ -40,21 +46,33 @@ export default defineBackground(() => {
   }
 
   async function parseQRFromImageUrl(url: string) {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const imageBitmap = await createImageBitmap(blob);
+    try {
+      let blob;
 
-    const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(imageBitmap, 0, 0);
+      if (url.startsWith('data:')) {
+        const response = await fetch(url);
+        blob = await response.blob();
+      } else {
+        const response = await fetch(url, { mode: 'cors' });
+        blob = await response.blob();
+      }
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = (globalThis as any).jsQR(imageData.data, imageData.width, imageData.height);
+      const imageBitmap = await createImageBitmap(blob);
+      const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(imageBitmap, 0, 0);
 
-    if (code && code.data) {
-      return parseOTPAuthUrl(code.data);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = (globalThis as any).jsQR(imageData.data, imageData.width, imageData.height);
+
+      if (code && code.data) {
+        return parseOTPAuthUrl(code.data);
+      }
+      return null;
+    } catch (error) {
+      console.error('解析 QR 码失败:', error);
+      throw error;
     }
-    return null;
   }
 
   function parseOTPAuthUrl(data: string) {
@@ -188,6 +206,131 @@ export default defineBackground(() => {
           updateBadgeForTab(tabs[0].id, tabs[0].url);
         }
       });
+    }
+  });
+
+  // 自动备份定时器
+  chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name === 'openpass-auto-backup') {
+      await handleAutoBackup();
+    }
+  });
+
+  async function handleAutoBackup() {
+    try {
+      const checkResult = await checkBackupNeeded();
+      if (!checkResult.needed) return;
+
+      const settings = await chrome.storage.local.get([
+        'enableAutoBackup',
+        'enableLocalSnapshot',
+        'enableDirectoryBackup',
+        'encryptedSecrets',
+        'secrets'
+      ]);
+
+      if (!settings.enableAutoBackup) return;
+
+      let secrets = [];
+      if (settings.encryptedSecrets) {
+        console.log('OpenPass: 密钥已加密，需要用户交互才能备份');
+        showNotification('自动备份提醒', '请打开 OpenPass 完成备份');
+        return;
+      } else if (settings.secrets) {
+        secrets = settings.secrets;
+      }
+
+      if (secrets.length === 0) return;
+
+      const backupData = {
+        format: 'openpass-backup',
+        formatVersion: 1,
+        appVersion: chrome.runtime.getManifest().version,
+        exportTime: new Date().toISOString(),
+        count: secrets.length,
+        encrypted: false,
+        secrets
+      };
+
+      if (settings.enableLocalSnapshot) {
+        const result = await chrome.storage.local.get(['backupSnapshots']);
+        let snapshots = result.backupSnapshots || [];
+
+        snapshots.unshift({
+          data: backupData,
+          timestamp: new Date().toISOString(),
+          count: backupData.count
+        });
+
+        if (snapshots.length > 5) {
+          snapshots = snapshots.slice(0, 5);
+        }
+
+        await chrome.storage.local.set({ backupSnapshots: snapshots });
+      }
+
+      await chrome.storage.local.set({
+        lastBackupTime: new Date().toISOString()
+      });
+
+      console.log('OpenPass: 自动备份完成');
+
+      if (settings.enableLocalSnapshot) {
+        showNotification('自动备份完成', `已备份 ${secrets.length} 个密钥到本地快照`);
+      }
+    } catch (error) {
+      console.error('OpenPass: 自动备份失败', error);
+      showNotification('自动备份失败', (error as Error).message);
+    }
+  }
+
+  async function checkBackupNeeded() {
+    const settings = await chrome.storage.local.get([
+      'enableAutoBackup',
+      'backupFrequency',
+      'lastBackupTime'
+    ]);
+
+    if (!settings.enableAutoBackup) {
+      return { needed: false, reason: 'disabled' };
+    }
+
+    if (!settings.lastBackupTime) {
+      return { needed: true, reason: 'never' };
+    }
+
+    const intervals: Record<string, number> = {
+      daily: 24 * 60 * 60 * 1000,
+      weekly: 7 * 24 * 60 * 60 * 1000,
+      monthly: 30 * 24 * 60 * 60 * 1000
+    };
+
+    const interval = intervals[settings.backupFrequency] || intervals.weekly;
+    const lastBackup = new Date(settings.lastBackupTime);
+    const elapsed = Date.now() - lastBackup.getTime();
+
+    if (elapsed >= interval) {
+      return { needed: true, reason: 'overdue' };
+    }
+
+    return { needed: false, reason: 'not_due' };
+  }
+
+  // 扩展启动时检查备份
+  chrome.runtime.onStartup.addListener(async () => {
+    const checkResult = await checkBackupNeeded();
+    if (checkResult.needed) {
+      chrome.alarms.create('openpass-auto-backup', { delayInMinutes: 5 });
+    }
+  });
+
+  // 扩展更新时检查备份
+  chrome.runtime.onInstalled.addListener(async (details) => {
+    if (details.reason === 'install') return;
+
+    const checkResult = await checkBackupNeeded();
+    if (checkResult.needed) {
+      chrome.alarms.create('openpass-auto-backup', { delayInMinutes: 5 });
     }
   });
 
