@@ -57,64 +57,47 @@ jobs:
           echo "Build time: $BUILD_TIME"
           echo "Commit: $COMMIT_HASH"
 
-      - name: Update version and inject build signature
+      - name: Update version in wxt.config.ts and package.json
         run: |
           node -e "
             const fs = require('fs');
-            const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-            manifest.version = '${{ steps.version.outputs.version }}';
-            manifest.build_time = '${{ steps.version.outputs.build_time }}';
-            manifest.commit_hash = '${{ steps.version.outputs.commit_hash }}';
-            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2));
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            // Update wxt.config.ts version
+            const configPath = 'wxt.config.ts';
+            let config = fs.readFileSync(configPath, 'utf8');
+            config = config.replace(/version:\s*['\"][^'\"]+['\"]/, \"version: '${{ steps.version.outputs.version }}'\");
+            fs.writeFileSync(configPath, config);
+            console.log('Updated wxt.config.ts version to ${{ steps.version.outputs.version }}');
+
+            // Update package.json version
+            const pkgPath = 'package.json';
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
             pkg.version = '${{ steps.version.outputs.version }}';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+            console.log('Updated package.json version to ${{ steps.version.outputs.version }}');
           "
-          echo "Updated version to ${{ steps.version.outputs.version }}"
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build extension
+        run: npm run build
+
+      - name: Package extension
         run: |
-          mkdir -p build/openpass
-
-          # 核心文件
-          cp -r icons build/openpass/
-          cp manifest.json build/openpass/
-          cp background.js build/openpass/
-          cp totp.js build/openpass/
-          cp crypto.js build/openpass/
-          cp jsQR.min.js build/openpass/
-          cp backup-manager.js build/openpass/
-          cp auto-backup.js build/openpass/
-
-          # Popup 页面
-          cp popup.html build/openpass/
-          cp popup.css build/openpass/
-          cp popup.js build/openpass/
-
-          # Manager 页面
-          cp manager.html build/openpass/
-          cp manager.css build/openpass/
-          cp manager.js build/openpass/
-
-          # Setup 和 Auth 页面
-          cp setup.html build/openpass/
-          cp setup.css build/openpass/
-          cp setup.js build/openpass/
-          cp auth.html build/openpass/
-          cp auth.css build/openpass/
-          cp auth.js build/openpass/
-
-          # Content Script
-          cp content.js build/openpass/
-          cp content.css build/openpass/
-
-          # 打包为 zip
           TAG="${{ steps.tag.outputs.tag }}"
-          cd build
-          zip -r ../${TAG}.zip openpass
-          cd ..
-
-          echo "Extension packaged successfully"
+          npx wxt zip
+          # WXT 输出到 .output/chrome-mv3.zip 或类似路径
+          OUTPUT_ZIP=$(find .output -name '*.zip' -type f | head -1)
+          if [ -n "$OUTPUT_ZIP" ]; then
+            cp "$OUTPUT_ZIP" "${TAG}.zip"
+            echo "Package created: ${TAG}.zip"
+          else
+            # Fallback: manually zip .output/chrome-mv3
+            cd .output/chrome-mv3
+            zip -r "../../${TAG}.zip" .
+            cd ../..
+            echo "Package created (fallback): ${TAG}.zip"
+          fi
           ls -la *.zip
 
       - name: Build Changelog
@@ -138,7 +121,7 @@ jobs:
                 },
                 {
                   "title": "## 🔧 维护",
-                  "labels": ["chore", "refactor", "perf", "style", "test", "ci"]
+                  "labels": ["chore", "refactor", "perf", "style", "test"]
                 }
               ],
               "label_extractor": [
@@ -155,12 +138,19 @@ jobs:
                   "target": "docs"
                 },
                 {
-                  "pattern": "^(chore|refactor|perf|style|test|ci):(.*)$",
+                  "pattern": "^(chore|refactor|perf|style|test)(:|\\(.*\\):)(.*)$",
                   "target": "chore"
                 }
               ],
+              "ignore_commit": [
+                "^ci:",
+                "^chore\\(ci\\):",
+                "^chore: bump version",
+                "^chore: update version"
+              ],
+              "pr_template": "- #{{TITLE}} (#{{NUMBER}})",
+              "commit_template": "- #{{TITLE}}",
               "template": "#{{CHANGELOG}}\n\n**Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/#{{FROM_TAG}}...#{{TO_TAG}}",
-              "pr_template": "- #{{TITLE}} (#{{SHA}})",
               "empty_template": "- No changes"
             }
         env:
