@@ -8,11 +8,10 @@ class CryptoUtils {
    * 从密码派生密钥
    * 使用 PBKDF2 算法
    */
-  static async deriveKey(password, salt) {
+  static async deriveKey(password: string, salt: Uint8Array) {
     const encoder = new TextEncoder();
     const passwordBuffer = encoder.encode(password);
 
-    // 导入原始密钥
     const baseKey = await crypto.subtle.importKey(
       'raw',
       passwordBuffer,
@@ -21,7 +20,6 @@ class CryptoUtils {
       ['deriveKey']
     );
 
-    // 派生 AES-GCM 密钥
     return crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
@@ -38,59 +36,43 @@ class CryptoUtils {
 
   /**
    * 加密数据
-   * @param {string} plaintext - 明文
-   * @param {string} password - 密码
-   * @returns {Promise<string>} - Base64 编码的加密数据
    */
-  static async encrypt(plaintext, password) {
+  static async encrypt(plaintext: string, password: string): Promise<string> {
     const encoder = new TextEncoder();
     const data = encoder.encode(plaintext);
 
-    // 生成随机 salt 和 iv
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const iv = crypto.getRandomValues(new Uint8Array(12));
 
-    // 派生密钥
     const key = await this.deriveKey(password, salt);
 
-    // 加密
     const encrypted = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv: iv },
       key,
       data
     );
 
-    // 组合: salt(16) + iv(12) + encrypted
     const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
     combined.set(salt, 0);
     combined.set(iv, salt.length);
     combined.set(new Uint8Array(encrypted), salt.length + iv.length);
 
-    // 转换为 Base64
     return this.arrayBufferToBase64(combined.buffer);
   }
 
   /**
    * 解密数据
-   * @param {string} ciphertext - Base64 编码的加密数据
-   * @param {string} password - 密码
-   * @returns {Promise<string>} - 明文
    */
-  static async decrypt(ciphertext, password) {
+  static async decrypt(ciphertext: string, password: string): Promise<string> {
     const decoder = new TextDecoder();
-
-    // Base64 解码
     const combined = new Uint8Array(this.base64ToArrayBuffer(ciphertext));
 
-    // 提取 salt, iv, encrypted
     const salt = combined.slice(0, 16);
     const iv = combined.slice(16, 28);
     const encrypted = combined.slice(28);
 
-    // 派生密钥
     const key = await this.deriveKey(password, salt);
 
-    // 解密
     const decrypted = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: iv },
       key,
@@ -103,9 +85,9 @@ class CryptoUtils {
   /**
    * 计算密码哈希（用于验证）
    */
-  static async hashPassword(password, salt) {
+  static async hashPassword(password: string, salt: Uint8Array) {
     const encoder = new TextEncoder();
-    const data = encoder.encode(password + this.arrayBufferToBase64(salt));
+    const data = encoder.encode(password + this.arrayBufferToBase64(salt.buffer));
 
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     return this.arrayBufferToBase64(hashBuffer);
@@ -114,7 +96,7 @@ class CryptoUtils {
   /**
    * 生成随机 salt
    */
-  static generateSalt() {
+  static generateSalt(): string {
     const salt = crypto.getRandomValues(new Uint8Array(16));
     return this.arrayBufferToBase64(salt.buffer);
   }
@@ -122,7 +104,11 @@ class CryptoUtils {
   /**
    * 验证主密码
    */
-  static async verifyMasterPassword(password, storedHash, salt) {
+  static async verifyMasterPassword(
+    password: string,
+    storedHash: string,
+    salt: string
+  ): Promise<boolean> {
     const saltBuffer = this.base64ToArrayBuffer(salt);
     const hash = await this.hashPassword(password, new Uint8Array(saltBuffer));
     return hash === storedHash;
@@ -131,7 +117,7 @@ class CryptoUtils {
   /**
    * 创建主密码哈希
    */
-  static async createMasterPasswordHash(password) {
+  static async createMasterPasswordHash(password: string) {
     const salt = this.generateSalt();
     const saltBuffer = this.base64ToArrayBuffer(salt);
     const hash = await this.hashPassword(password, new Uint8Array(saltBuffer));
@@ -141,7 +127,7 @@ class CryptoUtils {
   /**
    * ArrayBuffer 转 Base64
    */
-  static arrayBufferToBase64(buffer) {
+  static arrayBufferToBase64(buffer: ArrayBuffer): string {
     const bytes = new Uint8Array(buffer);
     let binary = '';
     for (let i = 0; i < bytes.byteLength; i++) {
@@ -153,7 +139,7 @@ class CryptoUtils {
   /**
    * Base64 转 ArrayBuffer
    */
-  static base64ToArrayBuffer(base64) {
+  static base64ToArrayBuffer(base64: string): ArrayBuffer {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -163,70 +149,4 @@ class CryptoUtils {
   }
 }
 
-// 会话管理
-class SessionManager {
-  constructor() {
-    this.timeout = 15 * 60 * 1000; // 15 分钟超时
-  }
-
-  /**
-   * 创建会话
-   */
-  async createSession(masterPassword) {
-    const expiresAt = Date.now() + this.timeout;
-    await chrome.storage.session.set({ sessionKey: masterPassword });
-    await chrome.storage.local.set({ sessionExpiresAt: expiresAt });
-  }
-
-  /**
-   * 获取会话密钥
-   */
-  async getSessionKey() {
-    // 检查是否过期
-    const localResult = await chrome.storage.local.get(['sessionExpiresAt']);
-    if (localResult.sessionExpiresAt && Date.now() > localResult.sessionExpiresAt) {
-      await this.clearSession();
-      return null;
-    }
-
-    const result = await chrome.storage.session.get(['sessionKey']);
-    return result.sessionKey || null;
-  }
-
-  /**
-   * 更新活动时间（延长超时）
-   */
-  async updateActivity() {
-    const key = await chrome.storage.session.get(['sessionKey']);
-    if (key.sessionKey) {
-      const expiresAt = Date.now() + this.timeout;
-      await chrome.storage.local.set({ sessionExpiresAt: expiresAt });
-    }
-  }
-
-  /**
-   * 清除会话
-   */
-  async clearSession() {
-    await chrome.storage.session.remove(['sessionKey']);
-    await chrome.storage.local.remove(['sessionExpiresAt']);
-  }
-
-  /**
-   * 检查是否已认证
-   */
-  async isAuthenticated() {
-    const key = await this.getSessionKey();
-    return key !== null;
-  }
-
-  /**
-   * 设置超时时间（分钟）
-   */
-  setTimeout(minutes) {
-    this.timeout = minutes * 60 * 1000;
-  }
-}
-
-// 全局会话实例
-const sessionManager = new SessionManager();
+export default CryptoUtils;
