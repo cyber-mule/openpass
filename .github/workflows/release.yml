@@ -106,12 +106,8 @@ jobs:
       - name: Find previous tag
         id: previoustag
         run: |
-          # 先尝试找当前 tag 之前的 tag
-          PREV_TAG=$(git describe --tags --abbrev=0 "${{ steps.tag.outputs.tag }}"^ 2>/dev/null || echo "")
-          # 如果没找到，尝试找仓库中最早的 tag
-          if [ -z "$PREV_TAG" ]; then
-            PREV_TAG=$(git describe --tags --abbrev=0 --always 2>/dev/null || echo "")
-          fi
+          git fetch --tags --force
+          PREV_TAG=$(git tag -l --sort=-creatordate | grep -v "^${{ steps.tag.outputs.tag }}$" | head -1)
           echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
           echo "Previous tag: ${PREV_TAG:-<none>}"
 
@@ -120,63 +116,105 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           FROM_TAG="${{ steps.previoustag.outputs.tag }}"
-          
+
           if [ -n "$FROM_TAG" ]; then
             RANGE="${FROM_TAG}..${TAG}"
           else
             RANGE="${TAG}"
-            FROM_TAG="first commit"
           fi
-          
-          # 获取提交列表并按类型分类
-          COMMITS=$(git log --pretty=format:"%s" $RANGE 2>/dev/null || git log --pretty=format:"%s")
-          
-          # 分类提交
-          FEATS=$(echo "$COMMITS" | grep -E "^feat(\([^)]*\))?!?:" | sed 's/^feat(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^feat: \(.*\)/- \1/' || true)
-          FIXES=$(echo "$COMMITS" | grep -E "^fix(\([^)]*\))?!?:" | sed 's/^fix(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^fix: \(.*\)/- \1/' || true)
-          DOCS=$(echo "$COMMITS" | grep -E "^docs(\([^)]*\))?!?:" | sed 's/^docs(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^docs: \(.*\)/- \1/' || true)
-          REFACTOR=$(echo "$COMMITS" | grep -E "^refactor(\([^)]*\))?!?:" | sed 's/^refactor(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^refactor: \(.*\)/- \1/' || true)
-          CHORE=$(echo "$COMMITS" | grep -E "^chore(\([^)]*\))?!?:" | sed 's/^chore(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^chore: \(.*\)/- \1/' || true)
-          CI=$(echo "$COMMITS" | grep -E "^ci(\([^)]*\))?!?:" | sed 's/^ci(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^ci: \(.*\)/- \1/' || true)
-          
-          # 生成 changelog
+
+          echo "=== Changelog range: $RANGE ==="
+          echo "=== All commits in range: ==="
+          git log --oneline $RANGE
+          echo "============================="
+
+          COMMITS=$(git log --pretty=format:"%s" $RANGE)
+          if [ -z "$COMMITS" ]; then
+            echo "No commits found in range, listing all as fallback:"
+            COMMITS=$(git log --pretty=format:"%s" -20)
+          fi
+
+          # 分类
+          FEATS=""
+          FIXES=""
+          DOCS=""
+          REFACTOR=""
+          CHORE=""
+          CI=""
+          OTHERS=""
+
+          while IFS= read -r line; do
+            case "$line" in
+              feat\(*\):*|feat:\ *)
+                msg="${line#*: }"
+                FEATS="${FEATS}- ${msg}\n"
+                ;;
+              fix\(*\):*|fix:\ *)
+                msg="${line#*: }"
+                FIXES="${FIXES}- ${msg}\n"
+                ;;
+              docs\(*\):*|docs:\ *)
+                msg="${line#*: }"
+                DOCS="${DOCS}- ${msg}\n"
+                ;;
+              refactor\(*\):*|refactor:\ *)
+                msg="${line#*: }"
+                REFACTOR="${REFACTOR}- ${msg}\n"
+                ;;
+              chore\(*\):*|chore:\ *)
+                msg="${line#*: }"
+                CHORE="${CHORE}- ${msg}\n"
+                ;;
+              ci\(*\):*|ci:\ *)
+                msg="${line#*: }"
+                CI="${CI}- ${msg}\n"
+                ;;
+              *)
+                OTHERS="${OTHERS}- ${line}\n"
+                ;;
+            esac
+          done <<< "$COMMITS"
+
           CHANGELOG=""
           if [ -n "$FEATS" ]; then
-            CHANGELOG="${CHANGELOG}## 🚀 新功能\n${FEATS}\n\n"
+            CHANGELOG="${CHANGELOG}## 🚀 新功能\n\n${FEATS}\n"
           fi
           if [ -n "$FIXES" ]; then
-            CHANGELOG="${CHANGELOG}## 🐛 Bug 修复\n${FIXES}\n\n"
+            CHANGELOG="${CHANGELOG}## 🐛 Bug 修复\n\n${FIXES}\n"
           fi
           if [ -n "$DOCS" ]; then
-            CHANGELOG="${CHANGELOG}## 📝 文档\n${DOCS}\n\n"
+            CHANGELOG="${CHANGELOG}## 📝 文档\n\n${DOCS}\n"
           fi
           if [ -n "$REFACTOR" ]; then
-            CHANGELOG="${CHANGELOG}## ♻️ 重构\n${REFACTOR}\n\n"
+            CHANGELOG="${CHANGELOG}## ♻️ 重构\n\n${REFACTOR}\n"
           fi
           if [ -n "$CI" ]; then
-            CHANGELOG="${CHANGELOG}## 🔧 CI/CD\n${CI}\n\n"
+            CHANGELOG="${CHANGELOG}## 🔧 CI/CD\n\n${CI}\n"
           fi
           if [ -n "$CHORE" ]; then
-            CHANGELOG="${CHANGELOG}## 🔧 维护\n${CHORE}\n\n"
+            CHANGELOG="${CHANGELOG}## 🔧 维护\n\n${CHORE}\n"
           fi
-          
-          # 如果没有分类提交，列出所有
+          if [ -n "$OTHERS" ]; then
+            CHANGELOG="${CHANGELOG}## 其他变更\n\n${OTHERS}\n"
+          fi
           if [ -z "$CHANGELOG" ]; then
-            CHANGELOG=$(echo "$COMMITS" | sed 's/^/- /' | tr '\n' '\\n')
+            CHANGELOG="无变更记录"
           fi
-          
-          # 添加完整变更链接
-          if [ -n "${{ steps.previoustag.outputs.tag }}" ]; then
-            CHANGELOG="${CHANGELOG}\n\n**完整变更**: https://github.com/${{ github.repository }}/compare/${FROM_TAG}...${TAG}"
+
+          if [ -n "$FROM_TAG" ]; then
+            CHANGELOG="${CHANGELOG}\n**完整变更**: https://github.com/${{ github.repository }}/compare/${FROM_TAG}...${TAG}"
           fi
-          
-          # 输出到文件和 step output
-          echo "changelog<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
-          echo -e "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
-          
-          echo "Generated changelog:"
+
+          echo "=== Generated Changelog ==="
           echo -e "$CHANGELOG"
+          echo "==========================="
+
+          # Use GITHUB_OUTPUT with delimiter
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo -e "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
