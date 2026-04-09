@@ -2,17 +2,34 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useSecretStore } from '@/stores/secrets';
 import { useAuthStore } from '@/stores/auth';
+import { showToast } from '@/utils/ui';
+
+interface Props {
+  pendingSecret?: { secret: string; site: string; name: string } | null;
+}
+
+interface Emits {
+  (e: 'secretAdded'): void;
+}
+
+const props = defineProps<Props>();
+const emit = defineEmits<Emits>();
 
 const secretStore = useSecretStore();
 const authStore = useAuthStore();
 const searchQuery = ref('');
-const selectedSecret = ref<string | null>(null);
+const showAddDialog = ref(false);
+const addingSecret = ref(false);
 
 const filteredSecrets = computed(() => secretStore.searchSecrets(searchQuery.value));
 
 onMounted(async () => {
   await authStore.updateActivity();
   startTimers();
+  // 如果有待添加的密钥，自动弹出确认框
+  if (props.pendingSecret) {
+    showAddDialog.value = true;
+  }
 });
 
 onUnmounted(() => {
@@ -44,6 +61,33 @@ async function copyCode(code: string) {
 async function handleLogout() {
   await authStore.clearSession();
   window.location.reload();
+}
+
+async function confirmAddSecret() {
+  if (!props.pendingSecret) return;
+  addingSecret.value = true;
+  try {
+    await secretStore.addSecret({
+      site: props.pendingSecret.site.toLowerCase(),
+      name: props.pendingSecret.name,
+      secret: props.pendingSecret.secret,
+      digits: 6,
+      period: 30,
+      algorithm: 'SHA1'
+    });
+    showAddDialog.value = false;
+    emit('secret-added');
+    await secretStore.loadSecrets();
+  } catch (error) {
+    showToast('添加失败: ' + (error as Error).message, 'error');
+  } finally {
+    addingSecret.value = false;
+  }
+}
+
+function cancelAddSecret() {
+  showAddDialog.value = false;
+  emit('secret-added');
 }
 </script>
 
@@ -87,23 +131,12 @@ async function handleLogout() {
           v-for="secret in filteredSecrets"
           :key="secret.id"
           class="p-3 hover:bg-gray-50 cursor-pointer transition-colors"
-          @click="selectedSecret = selectedSecret === secret.id ? null : secret.id"
         >
           <div class="flex items-center justify-between">
             <div class="flex-1 min-w-0">
               <p class="text-sm font-medium text-gray-900 truncate">{{ secret.name || secret.site }}</p>
               <p class="text-xs text-gray-500">{{ secret.site }}</p>
             </div>
-            <button
-              class="ml-2 text-primary-600 hover:text-primary-700"
-              @click.stop="copyCode(secret.secret)"
-              title="复制密钥"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            </button>
           </div>
         </div>
       </div>
@@ -113,5 +146,37 @@ async function handleLogout() {
     <div class="px-4 py-2 border-t border-gray-200 text-xs text-center text-gray-500">
       点击打开管理页面
     </div>
+
+    <!-- 待添加密钥确认框 -->
+    <Teleport to="body">
+      <div v-if="showAddDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-xl max-w-sm w-full">
+          <div class="px-5 py-4 border-b border-gray-200">
+            <h3 class="text-base font-semibold text-gray-900">识别到二维码</h3>
+          </div>
+          <div class="px-5 py-4 space-y-3">
+            <div>
+              <span class="text-xs text-gray-500">站点</span>
+              <p class="text-sm font-medium text-gray-900">{{ pendingSecret?.site || '（未识别）' }}</p>
+            </div>
+            <div>
+              <span class="text-xs text-gray-500">名称</span>
+              <p class="text-sm font-medium text-gray-900">{{ pendingSecret?.name || '—' }}</p>
+            </div>
+            <div>
+              <span class="text-xs text-gray-500">密钥</span>
+              <p class="text-sm font-mono text-gray-900 truncate">{{ pendingSecret?.secret }}</p>
+            </div>
+            <p v-if="addingSecret" class="text-xs text-gray-500">添加中...</p>
+          </div>
+          <div class="px-5 py-3 border-t border-gray-200 flex gap-2">
+            <button class="flex-1 btn-secondary" @click="cancelAddSecret" :disabled="addingSecret">取消</button>
+            <button class="flex-1 btn-primary" @click="confirmAddSecret" :disabled="addingSecret">
+              {{ addingSecret ? '添加中...' : '添加' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
