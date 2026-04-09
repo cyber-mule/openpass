@@ -51,5 +51,5 @@ export default defineConfig({
     }
   },
   modules: ['@wxt-dev/module-vue'],
-  imports: false
+  imports: true
 });

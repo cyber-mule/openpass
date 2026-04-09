@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
 const authStore = useAuthStore();
-const router = useRouter();
 
 const password = ref('');
 const showPassword = ref(false);
@@ -18,9 +16,6 @@ const passwordType = computed(() => showPassword.value ? 'text' : 'password');
 
 onMounted(async () => {
   await authStore.init();
-  if (authStore.isAuthenticated) {
-    router.push('/options');
-  }
 });
 
 async function handleSubmit() {
