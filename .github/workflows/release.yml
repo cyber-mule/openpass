@@ -106,47 +106,80 @@ jobs:
       - name: Find previous tag
         id: previoustag
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # 先尝试找当前 tag 之前的 tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "${{ steps.tag.outputs.tag }}"^ 2>/dev/null || echo "")
+          # 如果没找到，尝试找仓库中最早的 tag
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git describe --tags --abbrev=0 --always 2>/dev/null || echo "")
+          fi
           echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
-          echo "Previous tag: $PREV_TAG"
+          echo "Previous tag: ${PREV_TAG:-<none>}"
 
       - name: Build Changelog
-        uses: mikepenz/release-changelog-builder-action@v6
-        with:
-          mode: "COMMIT"
-          fromTag: ${{ steps.previoustag.outputs.tag }}
-          toTag: ${{ steps.tag.outputs.tag }}
-          configurationJson: |
-            {
-              "template": "#{{CHANGELOG}}\n\n**Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/#{{FROM_TAG}}...#{{TO_TAG}}",
-              "categories": [
-                { "title": "## 🚀 新功能", "labels": ["feat"] },
-                { "title": "## 🐛 Bug 修复", "labels": ["fix"] },
-                { "title": "## 📝 文档", "labels": ["docs"] },
-                { "title": "## ♻️ 重构", "labels": ["refactor"] },
-                { "title": "## 🔧 维护", "labels": ["chore"] }
-              ],
-              "label_extractor": [
-                {
-                  "pattern": "^(feat|fix|docs|chore|refactor|ci|style|perf|test)(?:\\([^)]*\\))?!?:.*",
-                  "on_property": "title",
-                  "target": "$1"
-                }
-              ],
-              "transformers": [
-                {
-                  "pattern": "^(feat|fix|docs|chore|refactor|ci|style|perf|test)(?:\\([^)]*\\))?!?: (.*)$",
-                  "target": "$2"
-                }
-              ],
-              "pr_template": "- #{{TITLE}}",
-              "commit_template": "- #{{TITLE}}"
-            }
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          FROM_TAG="${{ steps.previoustag.outputs.tag }}"
+          
+          if [ -n "$FROM_TAG" ]; then
+            RANGE="${FROM_TAG}..${TAG}"
+          else
+            RANGE="${TAG}"
+            FROM_TAG="first commit"
+          fi
+          
+          # 获取提交列表并按类型分类
+          COMMITS=$(git log --pretty=format:"%s" $RANGE 2>/dev/null || git log --pretty=format:"%s")
+          
+          # 分类提交
+          FEATS=$(echo "$COMMITS" | grep -E "^feat(\([^)]*\))?!?:" | sed 's/^feat(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^feat: \(.*\)/- \1/' || true)
+          FIXES=$(echo "$COMMITS" | grep -E "^fix(\([^)]*\))?!?:" | sed 's/^fix(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^fix: \(.*\)/- \1/' || true)
+          DOCS=$(echo "$COMMITS" | grep -E "^docs(\([^)]*\))?!?:" | sed 's/^docs(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^docs: \(.*\)/- \1/' || true)
+          REFACTOR=$(echo "$COMMITS" | grep -E "^refactor(\([^)]*\))?!?:" | sed 's/^refactor(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^refactor: \(.*\)/- \1/' || true)
+          CHORE=$(echo "$COMMITS" | grep -E "^chore(\([^)]*\))?!?:" | sed 's/^chore(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^chore: \(.*\)/- \1/' || true)
+          CI=$(echo "$COMMITS" | grep -E "^ci(\([^)]*\))?!?:" | sed 's/^ci(\([^)]*\))!?: \(.*\)/- \2/' | sed 's/^ci: \(.*\)/- \1/' || true)
+          
+          # 生成 changelog
+          CHANGELOG=""
+          if [ -n "$FEATS" ]; then
+            CHANGELOG="${CHANGELOG}## 🚀 新功能\n${FEATS}\n\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            CHANGELOG="${CHANGELOG}## 🐛 Bug 修复\n${FIXES}\n\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            CHANGELOG="${CHANGELOG}## 📝 文档\n${DOCS}\n\n"
+          fi
+          if [ -n "$REFACTOR" ]; then
+            CHANGELOG="${CHANGELOG}## ♻️ 重构\n${REFACTOR}\n\n"
+          fi
+          if [ -n "$CI" ]; then
+            CHANGELOG="${CHANGELOG}## 🔧 CI/CD\n${CI}\n\n"
+          fi
+          if [ -n "$CHORE" ]; then
+            CHANGELOG="${CHANGELOG}## 🔧 维护\n${CHORE}\n\n"
+          fi
+          
+          # 如果没有分类提交，列出所有
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG=$(echo "$COMMITS" | sed 's/^/- /' | tr '\n' '\\n')
+          fi
+          
+          # 添加完整变更链接
+          if [ -n "${{ steps.previoustag.outputs.tag }}" ]; then
+            CHANGELOG="${CHANGELOG}\n\n**完整变更**: https://github.com/${{ github.repository }}/compare/${FROM_TAG}...${TAG}"
+          fi
+          
+          # 输出到文件和 step output
+          echo "changelog<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
+          echo -e "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
+          
+          echo "Generated changelog:"
+          echo -e "$CHANGELOG"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
