@@ -1,5 +1,5 @@
 export default defineBackground(() => {
-  importScripts('jsQR.min.js', 'totp.js');
+  importScripts('/jsQR.min.js', '/totp.js');
 
   // 创建右键菜单
   chrome.runtime.onInstalled.addListener(() => {
