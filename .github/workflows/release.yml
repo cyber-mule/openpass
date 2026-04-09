@@ -91,17 +91,30 @@ jobs:
           npx wxt zip
           # WXT 输出到 .output/chrome-mv3.zip 或类似路径
           OUTPUT_ZIP=$(find .output -name '*.zip' -type f | head -1)
+          echo "Found output zip: $OUTPUT_ZIP"
           if [ -n "$OUTPUT_ZIP" ]; then
             cp "$OUTPUT_ZIP" "${TAG}.zip"
             echo "Package created: ${TAG}.zip"
           else
             # Fallback: manually zip .output/chrome-mv3
-            cd .output/chrome-mv3
-            zip -r "../../${TAG}.zip" .
-            cd ../..
+            if [ -d ".output/chrome-mv3" ]; then
+              cd .output/chrome-mv3
+              zip -r "../../${TAG}.zip" .
+              cd ../..
+            fi
             echo "Package created (fallback): ${TAG}.zip"
           fi
-          ls -la *.zip
+          echo "=== Package verification ==="
+          ls -la *.zip 2>/dev/null || echo "No zip file found in workspace!"
+          file "${TAG}.zip" 2>/dev/null || echo "Zip file not found: ${TAG}.zip"
+          echo "==========================="
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.tag.outputs.tag }}-zip
+          path: ${{ steps.tag.outputs.tag }}.zip
+          retention-days: 1
 
       - name: Find previous tag
         id: previoustag
@@ -209,6 +222,9 @@ jobs:
           echo -e "$CHANGELOG"
           echo "==========================="
 
+          # Write changelog to file
+          echo -e "$CHANGELOG" > "${{ runner.temp }}/CHANGELOG.md"
+
           # Use GITHUB_OUTPUT with delimiter
           {
             echo "changelog<<CHANGELOG_EOF"
@@ -216,14 +232,29 @@ jobs:
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify release file
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "Checking for: ${TAG}.zip"
+          if [ -f "${TAG}.zip" ]; then
+            echo "✅ Release file exists: $(ls -lh ${TAG}.zip)"
+          else
+            echo "❌ Release file NOT found!"
+            # Try to find it
+            find . -name "*.zip" -type f 2>/dev/null
+            exit 1
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          body: ${{ steps.changelog.outputs.changelog }}
-          files: ${{ steps.tag.outputs.tag }}.zip
+          body_path: ${{ runner.temp }}/CHANGELOG.md
+          files: |
+            ${{ steps.tag.outputs.tag }}.zip
           prerelease: ${{ contains(steps.tag.outputs.tag, '-rc') || contains(steps.tag.outputs.tag, '-alpha') || contains(steps.tag.outputs.tag, '-beta') || contains(steps.tag.outputs.tag, '-dev') }}
+          draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
