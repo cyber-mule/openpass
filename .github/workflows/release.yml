@@ -255,6 +255,8 @@ jobs:
             ${{ steps.tag.outputs.tag }}.zip
           prerelease: ${{ contains(steps.tag.outputs.tag, '-rc') || contains(steps.tag.outputs.tag, '-alpha') || contains(steps.tag.outputs.tag, '-beta') || contains(steps.tag.outputs.tag, '-dev') }}
           draft: false
+          allowUpdates: true
+          updateOnlyUnreleased: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
