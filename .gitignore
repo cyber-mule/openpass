@@ -1,47 +1,17 @@
-# 系统文件
-.DS_Store
-Thumbs.db
+# WXT build output
+.output/
+.wxt/
 
-# IDE 配置
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# 日志和临时文件
-*.log
-*.tmp
-*.temp
-
-# Node.js (如果有构建工具)
+# Node modules
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
-# 打包文件
-*.zip
-*.crx
-*.pem
-*.pub
-
-# 构建目录
-build/
-
-# 测试覆盖率
-coverage/
-
-# 其他
-.env
-.env.local
-
-# 开发工具脚本
-generate-icons.js
+# 公共静态资源（由 public/ 管理）
+icons/
+logo.png
+jsQR.min.js
+totp.js
 
 # AI 助手上下文文件
 QWEN.md
 CLAUDE.md
 AGENTS.md
-# WXT build output
-.output/
-.wxt/
