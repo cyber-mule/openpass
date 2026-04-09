@@ -1,20 +1,116 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import { useSecretStore } from '@/stores/secrets';
+import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
+import Sidebar from '@/components/manager/Sidebar.vue';
+import SecretTable from '@/components/manager/SecretTable.vue';
+import SecretModal from '@/components/manager/SecretModal.vue';
+import SettingsPanel from '@/components/manager/SettingsPanel.vue';
+import WelcomeGuide from '@/components/manager/WelcomeGuide.vue';
+import type { Secret } from '@/stores/secrets';
+import { showToast } from '@/utils/ui';
 
 const authStore = useAuthStore();
+const secretStore = useSecretStore();
+
+const currentPage = ref('secrets');
+const showWelcome = ref(false);
+const showSecretModal = ref(false);
+const editingSecret = ref<Secret | null>(null);
 const loading = ref(true);
-const isAuthenticated = ref(false);
+
+// 键盘快捷键
+const shortcuts = useKeyboardShortcuts({
+  onSearch: () => {
+    const input = document.querySelector('input[placeholder="搜索密钥..."]') as HTMLInputElement;
+    input?.focus();
+  },
+  onAdd: () => showSecretModal.value = true,
+  onSettings: () => currentPage.value = 'settings',
+  onHelp: () => {},
+  onEdit: () => {
+    if (secretStore.getFilteredSecrets().length > 0) {
+      const first = secretStore.getFilteredSecrets()[0];
+      editSecret(first);
+    }
+  },
+  onDelete: async () => {
+    if (secretStore.getFilteredSecrets().length > 0) {
+      const first = secretStore.getFilteredSecrets()[0];
+      await secretStore.deleteSecret(first.id);
+    }
+  },
+  onCopy: async () => {
+    if (secretStore.getFilteredSecrets().length > 0) {
+      const first = secretStore.getFilteredSecrets()[0];
+      const { TOTP } = await import('@/utils/totp');
+      const result = await TOTP.generateCode(first.secret, first.digits || 6);
+      await TOTP.copyToClipboard(result.code);
+      showToast('验证码已复制', 'success');
+    }
+  },
+  onSelectNext: () => {},
+  onSelectPrevious: () => {},
+  isModalOpen: () => showSecretModal.value,
+  isInputFocused: () => {
+    const tag = document.activeElement?.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+});
 
 onMounted(async () => {
   await authStore.init();
-  isAuthenticated.value = authStore.isAuthenticated;
-  loading.value = false;
 
-  if (!isAuthenticated.value) {
-    window.location.href = 'auth.html?redirect=options.html';
+  if (!authStore.isAuthenticated) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const redirect = urlParams.get('redirect') || 'options.html';
+    window.location.href = `/auth.html?redirect=${redirect}`;
+    return;
   }
+
+  await secretStore.loadSecrets();
+
+  // 检查是否需要显示欢迎引导
+  const result = await chrome.storage.local.get(['isSetupComplete', 'welcomeCompleted', 'secrets']);
+  if (!result.isSetupComplete || !result.welcomeCompleted) {
+    showWelcome.value = true;
+  }
+
+  shortcuts.register();
+  shortcuts.setTotal(secretStore.secrets.length);
+
+  loading.value = false;
 });
+
+onUnmounted(() => {
+  shortcuts.unregister();
+});
+
+function addSecret() {
+  editingSecret.value = null;
+  showSecretModal.value = true;
+}
+
+function editSecret(secret: Secret) {
+  editingSecret.value = secret;
+  showSecretModal.value = true;
+}
+
+async function deleteSecret(secret: Secret) {
+  if (confirm(`确定要删除 "${secret.name || secret.site}" 吗？`)) {
+    await secretStore.deleteSecret(secret.id);
+  }
+}
+
+function handleModalClose() {
+  showSecretModal.value = false;
+  editingSecret.value = null;
+}
+
+function handleWelcomeClose() {
+  showWelcome.value = false;
+}
 </script>
 
 <template>
@@ -24,13 +120,33 @@ onMounted(async () => {
       <p class="mt-4 text-gray-600">加载中...</p>
     </div>
   </div>
-  <div v-else-if="isAuthenticated" class="min-h-screen bg-gray-50">
-    <div class="max-w-6xl mx-auto px-4 py-8">
-      <h1 class="text-3xl font-bold text-gray-900 mb-8">OpenPass 管理</h1>
-      <div class="bg-white rounded-lg shadow p-6">
-        <p class="text-gray-600">管理页面正在迁移中...</p>
-        <p class="text-sm text-gray-500 mt-2">原始功能已保留，Vue 组件版本将逐步完善</p>
-      </div>
-    </div>
+
+  <div v-else class="flex min-h-screen bg-gray-50">
+    <!-- 侧边栏 -->
+    <Sidebar :current-page="currentPage" @navigate="currentPage = $event" />
+
+    <!-- 主内容 -->
+    <main class="flex-1 p-8 overflow-y-auto">
+      <SecretTable
+        v-if="currentPage === 'secrets'"
+        @add="addSecret"
+        @edit="editSecret"
+        @delete="deleteSecret"
+      />
+      <SettingsPanel v-else />
+    </main>
+
+    <!-- 密钥表单模态框 -->
+    <SecretModal
+      :open="showSecretModal"
+      :editing-secret="editingSecret"
+      @close="handleModalClose"
+    />
+
+    <!-- 欢迎引导 -->
+    <WelcomeGuide
+      v-if="showWelcome"
+      @close="handleWelcomeClose"
+    />
   </div>
 </template>

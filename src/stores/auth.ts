@@ -12,17 +12,19 @@ export const useAuthStore = defineStore('auth', () => {
   const sessionKey = ref<string | null>(null);
   const expiresAt = ref<number | null>(null);
   const isAuthenticated = ref(false);
-  const authAttempts = useStorage('authAttempts', 0);
+  const authAttempts = ref(0);
 
   const MAX_ATTEMPTS = 5;
   const SESSION_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 
   async function init() {
-    const result = await chrome.storage.local.get(['sessionExpiresAt']);
+    const result = await chrome.storage.local.get(['sessionExpiresAt', 'authAttempts']);
     if (result.sessionExpiresAt && Date.now() > result.sessionExpiresAt) {
       await clearSession();
       return;
     }
+
+    authAttempts.value = result.authAttempts || 0;
 
     const sessionResult = await chrome.storage.session.get(['sessionKey']);
     if (sessionResult.sessionKey) {
@@ -87,6 +89,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   function isLocked() {
     return authAttempts.value >= MAX_ATTEMPTS;
+  }
+
+  async function createMasterPasswordHash(password: string) {
+    return CryptoUtils.createMasterPasswordHash(password);
   }
 
   return {
