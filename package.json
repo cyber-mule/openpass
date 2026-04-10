@@ -1,6 +1,6 @@
 {
   "name": "openpass",
-  "version": "0.2.0-beta",
+  "version": "0.2.0",
   "description": "> 开源、本地、安全的两步验证管理器",
   "main": "auth.js",
   "directories": {

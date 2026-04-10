@@ -15,9 +15,16 @@ export default defineBackground(() => {
       periodInMinutes: 60 // 每小时检查一次
     });
 
-    // 首次安装时自动打开管理页面（新标签页）
+    // 首次安装时自动打开管理页面（新窗口）
     if (details.reason === 'install') {
-      chrome.tabs.create({ url: 'options.html' });
+      const url = chrome.runtime.getURL('options.html');
+      chrome.windows.create({
+        url,
+        type: 'normal',
+        width: 1200,
+        height: 800,
+        focused: true
+      });
     }
   });
 
