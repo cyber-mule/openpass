@@ -18,19 +18,25 @@ export const useAuthStore = defineStore('auth', () => {
   const SESSION_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 
   async function init() {
-    const result = await chrome.storage.local.get(['sessionExpiresAt', 'authAttempts']);
-    if (result.sessionExpiresAt && Date.now() > result.sessionExpiresAt) {
-      await clearSession();
-      return;
-    }
+    try {
+      const result = await chrome.storage.local.get(['sessionExpiresAt', 'authAttempts']);
+      if (result.sessionExpiresAt && Date.now() > result.sessionExpiresAt) {
+        await clearSession();
+        return;
+      }
 
-    authAttempts.value = result.authAttempts || 0;
+      authAttempts.value = result.authAttempts || 0;
 
-    const sessionResult = await chrome.storage.session.get(['sessionKey']);
-    if (sessionResult.sessionKey) {
-      sessionKey.value = sessionResult.sessionKey;
-      expiresAt.value = result.sessionExpiresAt;
-      isAuthenticated.value = true;
+      const sessionResult = await chrome.storage.session.get(['sessionKey']);
+      if (sessionResult.sessionKey) {
+        sessionKey.value = sessionResult.sessionKey;
+        expiresAt.value = result.sessionExpiresAt;
+        isAuthenticated.value = true;
+      }
+    } catch (error) {
+      console.error('Failed to initialize auth:', error);
+      isAuthenticated.value = false;
+      authAttempts.value = 0;
     }
   }
 

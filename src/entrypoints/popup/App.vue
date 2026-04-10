@@ -12,14 +12,18 @@ const loading = ref(true);
 const pendingSecret = ref<{ secret: string; site: string; name: string } | null>(null);
 
 onMounted(async () => {
-  await authStore.init();
-  if (authStore.isAuthenticated) {
-    currentView.value = 'list';
-    await secretStore.loadSecrets();
-    // 检查是否有待添加的密钥（来自右键菜单 QR 识别）
-    await checkPendingSecret();
+  try {
+    await authStore.init();
+    if (authStore.isAuthenticated) {
+      currentView.value = 'list';
+      await secretStore.loadSecrets();
+      await checkPendingSecret();
+    }
+  } catch (error) {
+    console.error('Failed to mount popup:', error);
+  } finally {
+    loading.value = false;
   }
-  loading.value = false;
 });
 
 function handleAuthSuccess() {
@@ -29,11 +33,14 @@ function handleAuthSuccess() {
 }
 
 async function checkPendingSecret() {
-  const result = await chrome.storage.local.get(['pendingSecret']);
-  if (result.pendingSecret) {
-    pendingSecret.value = result.pendingSecret;
-    // 清除 pendingSecret
-    await chrome.storage.local.remove(['pendingSecret']);
+  try {
+    const result = await chrome.storage.local.get(['pendingSecret']);
+    if (result.pendingSecret) {
+      pendingSecret.value = result.pendingSecret;
+      await chrome.storage.local.remove(['pendingSecret']);
+    }
+  } catch (error) {
+    console.error('Failed to check pending secret:', error);
   }
 }
 </script>
