@@ -62,6 +62,17 @@ const shortcuts = useKeyboardShortcuts({
 onMounted(async () => {
   await authStore.init();
 
+  // 检查是否首次使用（未设置主密码）
+  const setupResult = await chrome.storage.local.get(['masterPasswordHash', 'isSetupComplete']);
+  if (!setupResult.masterPasswordHash) {
+    // 首次使用，直接显示欢迎引导，不跳转认证页面
+    showWelcome.value = true;
+    await secretStore.loadSecrets();
+    loading.value = false;
+    shortcuts.register();
+    return;
+  }
+
   if (!authStore.isAuthenticated) {
     const urlParams = new URLSearchParams(window.location.search);
     const redirect = urlParams.get('redirect') || 'options.html';
