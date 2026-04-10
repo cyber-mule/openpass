@@ -2,7 +2,7 @@ export default defineBackground(() => {
   importScripts('/jsQR.min.js', '/totp.js');
 
   // 创建右键菜单
-  chrome.runtime.onInstalled.addListener(() => {
+  chrome.runtime.onInstalled.addListener((details) => {
     chrome.contextMenus.create({
       id: 'parseQRCode',
       title: '识别并添加',
@@ -14,6 +14,11 @@ export default defineBackground(() => {
       delayInMinutes: 5,
       periodInMinutes: 60 // 每小时检查一次
     });
+
+    // 首次安装时自动打开管理页面
+    if (details.reason === 'install') {
+      chrome.runtime.openOptionsPage();
+    }
   });
 
   // 监听右键菜单点击
