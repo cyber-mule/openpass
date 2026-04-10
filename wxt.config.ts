@@ -1,6 +1,7 @@
 import { defineConfig } from 'wxt';
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { generateKeyPairSync } from 'node:crypto';
+import UnoCSS from 'unocss/vite';
 
 /**
  * 读取或生成固定扩展 ID key
@@ -28,6 +29,9 @@ function getExtensionKey(): string {
 
 export default defineConfig({
   srcDir: 'src',
+  vite: () => ({
+    plugins: [UnoCSS()]
+  }),
   manifest: {
     manifest_version: 3,
     name: 'OpenPass',
