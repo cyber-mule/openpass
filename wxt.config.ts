@@ -54,6 +54,5 @@ export default defineConfig({
       '128': 'icons/icon128.png'
     }
   },
-  modules: ['@wxt-dev/module-vue'],
-  imports: true
+  modules: ['@wxt-dev/module-vue']
 });
