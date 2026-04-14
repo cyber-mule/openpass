@@ -106,6 +106,16 @@ export const useSecretStore = defineStore('secrets', () => {
     );
   }
 
+  function searchSecrets(query: string) {
+    if (!query) return secrets.value;
+    const lowerQuery = query.toLowerCase();
+    return secrets.value.filter(s =>
+      s.site.toLowerCase().includes(lowerQuery) ||
+      s.name?.toLowerCase().includes(lowerQuery) ||
+      s.secret.toLowerCase().includes(lowerQuery)
+    );
+  }
+
   function getSecretById(id: string) {
     return secrets.value.find(s => s.id === id);
   }
@@ -181,6 +191,7 @@ export const useSecretStore = defineStore('secrets', () => {
     updateSecret,
     deleteSecret,
     getFilteredSecrets,
+    searchSecrets,
     getSecretById,
     exportSecrets,
     importSecrets
