@@ -57,10 +57,17 @@ async function handleExport() {
   isExporting.value = true;
   try {
     let password = exportPassword.value || undefined;
-    
-    // 如果启用了加密设置且使用主密码
-    if (enableBackupEncryption.value && useMasterPasswordForBackup.value && !password) {
+
+    // 如果启用了加密设置且使用主密码，且有 sessionKey
+    if (enableBackupEncryption.value && useMasterPasswordForBackup.value && !password && authStore.sessionKey) {
       password = authStore.sessionKey;
+    }
+
+    // 如果设置了加密但没有密码，提示用户
+    if (enableBackupEncryption.value && !password) {
+      showToast('加密备份需要密码，请在下方输入密码', 'warning');
+      isExporting.value = false;
+      return;
     }
 
     const backupData = await autoBackup.createBackup(secretStore.secrets, { password });
