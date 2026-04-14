@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Eye, EyeOff } from 'lucide-vue-next';
 
 const emit = defineEmits<{
   'auth-success': [];
@@ -14,8 +18,6 @@ const submitting = ref(false);
 
 const remainingAttempts = computed(() => authStore.getRemainingAttempts());
 const isLocked = computed(() => authStore.isLocked());
-
-const passwordType = computed(() => showPassword.value ? 'text' : 'password');
 
 async function handleSubmit() {
   if (!password.value) {
@@ -53,69 +55,61 @@ async function handleSubmit() {
     submitting.value = false;
   }
 }
-
-function togglePassword() {
-  showPassword.value = !showPassword.value;
-}
 </script>
 
 <template>
-  <div class="p-6">
-    <div class="text-center mb-6">
-      <div class="mx-auto w-12 h-12 mb-3">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-primary-600">
+  <div class="p-5">
+    <div class="text-center mb-5">
+      <div class="mx-auto w-11 h-11 mb-3 bg-primary/10 rounded-full flex items-center justify-center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-5 h-5 text-primary">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </svg>
       </div>
-      <h1 class="text-xl font-semibold text-gray-900">验证主密码</h1>
-      <p class="text-sm text-gray-500 mt-1">请输入主密码以访问你的密钥</p>
+      <h1 class="text-lg font-semibold">验证主密码</h1>
+      <p class="text-sm text-muted-foreground mt-1">请输入主密码以访问你的密钥</p>
     </div>
 
     <form @submit.prevent="handleSubmit" class="space-y-4">
-      <div class="form-group">
-        <label for="password" class="form-label">主密码</label>
+      <div class="space-y-2">
+        <Label for="password">主密码</Label>
         <div class="relative">
-          <input
+          <Input
             id="password"
             v-model="password"
-            :type="passwordType"
+            :type="showPassword ? 'text' : 'password'"
             placeholder="输入主密码"
             autocomplete="current-password"
             autofocus
-            class="input pr-10"
             :disabled="submitting || isLocked"
+            class="pr-10"
           />
           <button
             type="button"
-            class="toggle-password absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-            @click="togglePassword"
+            class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            @click="showPassword = !showPassword"
             :disabled="submitting || isLocked"
           >
-            <svg v-if="!showPassword" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-              <line x1="1" y1="1" x2="23" y2="23" />
-            </svg>
+            <Eye v-if="!showPassword" class="h-4 w-4" />
+            <EyeOff v-else class="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+      <p v-if="error" class="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+        {{ error }}
+      </p>
 
-      <button
+      <Button
         type="submit"
-        class="btn-primary w-full"
+        class="w-full"
         :disabled="submitting || isLocked"
       >
         {{ submitting ? '验证中...' : (isLocked ? '已锁定' : '解锁') }}
-      </button>
+      </Button>
 
-      <p v-if="!isLocked && remainingAttempts < 5" class="text-xs text-center text-gray-500">
-        剩余尝试次数：<span class="font-medium text-red-600">{{ remainingAttempts }}</span>
+      <p v-if="!isLocked && remainingAttempts < 5" class="text-xs text-center text-muted-foreground">
+        剩余尝试次数：<span class="font-medium text-destructive">{{ remainingAttempts }}</span>
       </p>
     </form>
   </div>

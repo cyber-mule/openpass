@@ -6,7 +6,9 @@ import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
 import Sidebar from '@/components/manager/Sidebar.vue';
 import SecretTable from '@/components/manager/SecretTable.vue';
 import SecretModal from '@/components/manager/SecretModal.vue';
+import BackupPanel from '@/components/manager/BackupPanel.vue';
 import SettingsPanel from '@/components/manager/SettingsPanel.vue';
+import AboutPanel from '@/components/manager/AboutPanel.vue';
 import WelcomeGuide from '@/components/manager/WelcomeGuide.vue';
 import type { Secret } from '@/stores/secrets';
 import { showToast } from '@/utils/ui';
@@ -26,23 +28,27 @@ const shortcuts = useKeyboardShortcuts({
     const input = document.querySelector('input[placeholder="搜索密钥..."]') as HTMLInputElement;
     input?.focus();
   },
-  onAdd: () => showSecretModal.value = true,
+  onAdd: () => {
+    if (currentPage.value === 'secrets') {
+      showSecretModal.value = true;
+    }
+  },
   onSettings: () => currentPage.value = 'settings',
-  onHelp: () => {},
+  onHelp: () => currentPage.value = 'about',
   onEdit: () => {
-    if (secretStore.getFilteredSecrets().length > 0) {
+    if (currentPage.value === 'secrets' && secretStore.getFilteredSecrets().length > 0) {
       const first = secretStore.getFilteredSecrets()[0];
       editSecret(first);
     }
   },
   onDelete: async () => {
-    if (secretStore.getFilteredSecrets().length > 0) {
+    if (currentPage.value === 'secrets' && secretStore.getFilteredSecrets().length > 0) {
       const first = secretStore.getFilteredSecrets()[0];
       await secretStore.deleteSecret(first.id);
     }
   },
   onCopy: async () => {
-    if (secretStore.getFilteredSecrets().length > 0) {
+    if (currentPage.value === 'secrets' && secretStore.getFilteredSecrets().length > 0) {
       const first = secretStore.getFilteredSecrets()[0];
       const { TOTP } = await import('@/utils/totp');
       const result = await TOTP.generateCode(first.secret, first.digits || 6);
@@ -138,13 +144,22 @@ function handleWelcomeClose() {
 
     <!-- 主内容 -->
     <main class="flex-1 p-8 overflow-y-auto">
+      <!-- 密钥管理页 -->
       <SecretTable
         v-if="currentPage === 'secrets'"
         @add="addSecret"
         @edit="editSecret"
         @delete="deleteSecret"
       />
-      <SettingsPanel v-else />
+
+      <!-- 备份恢复页 -->
+      <BackupPanel v-else-if="currentPage === 'backup'" />
+
+      <!-- 设置页 -->
+      <SettingsPanel v-else-if="currentPage === 'settings'" />
+
+      <!-- 关于页 -->
+      <AboutPanel v-else-if="currentPage === 'about'" />
     </main>
 
     <!-- 密钥表单模态框 -->
