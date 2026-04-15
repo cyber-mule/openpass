@@ -5,13 +5,6 @@ import { useAuthStore } from '@/stores/auth';
 import { useAutoBackup, type DirectoryInfo } from '@/composables/useAutoBackup';
 import { showToast } from '@/utils/ui';
 import CryptoUtils from '@/utils/crypto';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Key, Shield, Clock, Trash2, FolderOpen, AlertTriangle, Check, X } from 'lucide-vue-next';
 
 const secretStore = useSecretStore();
 const authStore = useAuthStore();
@@ -38,6 +31,9 @@ const passwordError = ref('');
 // 备份加密设置
 const enableBackupEncryption = ref(false);
 const useMasterPasswordForBackup = ref(true);
+const backupPassword = ref('');
+const backupPasswordConfirm = ref('');
+const backupPasswordError = ref('');
 
 // 立即备份
 const backingUp = ref(false);
@@ -61,20 +57,12 @@ async function loadAllSettings() {
   // 加载备份加密设置
   const encryptionResult = await chrome.storage.local.get([
     'enableBackupEncryption',
-    'useMasterPasswordForBackup'
+    'useMasterPasswordForBackup',
+    'backupPasswordHash'
   ]);
   enableBackupEncryption.value = encryptionResult.enableBackupEncryption || false;
   useMasterPasswordForBackup.value = encryptionResult.useMasterPasswordForBackup !== false;
 }
-
-// 监听目录备份开关
-watch(enableDirectoryBackup, async (enabled) => {
-  if (enabled && !directoryInfo.value.hasHandle) {
-    // 启用但未选择目录，自动弹出选择
-    await handleSelectDirectory();
-  }
-  await saveBackupSettings();
-});
 
 // 格式化时间显示
 const formattedLastBackupTime = computed(() => {
@@ -109,6 +97,14 @@ const formattedNextBackupTime = computed(() => {
   return '即将';
 });
 
+// 监听目录备份开关
+watch(enableDirectoryBackup, async (enabled) => {
+  if (enabled && !directoryInfo.value.hasHandle) {
+    await handleSelectDirectory();
+  }
+  await saveBackupSettings();
+});
+
 async function saveBackupSettings() {
   await autoBackup.saveSettings({
     enableAutoBackup: enableAutoBackup.value,
@@ -125,19 +121,57 @@ async function saveBackupSettings() {
     nextBackupTime.value = next.toISOString();
     await autoBackup.saveSettings({ nextBackupTime: nextBackupTime.value });
   }
+}
 
-  // 保存加密设置
+// 保存加密设置
+async function saveEncryptionSettings() {
   await chrome.storage.local.set({
     enableBackupEncryption: enableBackupEncryption.value,
     useMasterPasswordForBackup: useMasterPasswordForBackup.value
   });
 
-  showToast('设置已保存', 'success');
+  if (enableBackupEncryption.value) {
+    showToast(useMasterPasswordForBackup.value ? '已启用备份加密，使用主密码' : '已启用备份加密，请设置自定义密码', 'success');
+  } else {
+    showToast('已禁用备份加密', 'success');
+  }
+}
+
+// 保存自定义备份密码
+async function saveBackupPassword() {
+  if (!backupPassword.value) {
+    backupPasswordError.value = '请输入备份密码';
+    return;
+  }
+
+  if (backupPassword.value.length < 6) {
+    backupPasswordError.value = '密码至少需要 6 个字符';
+    return;
+  }
+
+  if (backupPassword.value !== backupPasswordConfirm.value) {
+    backupPasswordError.value = '两次输入的密码不一致';
+    return;
+  }
+
+  try {
+    const { hash, salt } = await CryptoUtils.createMasterPasswordHash(backupPassword.value);
+    await chrome.storage.local.set({
+      backupPasswordHash: hash,
+      backupPasswordSalt: salt
+    });
+    backupPasswordError.value = '';
+    backupPassword.value = '';
+    backupPasswordConfirm.value = '';
+    showToast('备份密码已保存', 'success');
+  } catch {
+    backupPasswordError.value = '保存失败';
+  }
 }
 
 async function handleSelectDirectory() {
   const result = await autoBackup.selectDirectory();
-  
+
   if (result.success) {
     directoryInfo.value = await autoBackup.getDirectoryInfo();
     showToast('目录选择成功', 'success');
@@ -148,7 +182,7 @@ async function handleSelectDirectory() {
 
 async function handleRequestPermission() {
   const result = await autoBackup.requestPermission();
-  
+
   if (result.success) {
     directoryInfo.value = await autoBackup.getDirectoryInfo();
     showToast('授权成功', 'success');
@@ -166,14 +200,27 @@ async function handleBackupNow() {
   backingUp.value = true;
   try {
     let password = null;
-    
+
     // 如果启用加密且使用主密码
     if (enableBackupEncryption.value && useMasterPasswordForBackup.value) {
       password = authStore.sessionKey;
       if (!password) {
         showToast('请先验证主密码', 'error');
+        backingUp.value = false;
         return;
       }
+    } else if (enableBackupEncryption.value && !useMasterPasswordForBackup.value) {
+      // 使用自定义备份密码
+      const result = await chrome.storage.local.get(['backupPasswordHash', 'backupPasswordSalt']);
+      if (!result.backupPasswordHash) {
+        showToast('请先设置备份密码', 'error');
+        backingUp.value = false;
+        return;
+      }
+      // 这里需要用户输入密码，暂时跳过
+      showToast('自定义密码备份需要重新验证', 'warning');
+      backingUp.value = false;
+      return;
     }
 
     const results = await autoBackup.performBackup(secretStore.secrets, { password });
@@ -302,89 +349,90 @@ async function resetAllData() {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <h1 class="text-2xl font-bold text-foreground">设置</h1>
+  <div class="settings-page">
+    <header class="page-header">
+      <h1>设置</h1>
+    </header>
 
-    <!-- 主密码设置 -->
-    <Card>
-      <CardHeader>
-        <div class="flex items-center gap-4">
-          <Key class="w-5 h-5 text-primary" />
-          <div>
-            <CardTitle>主密码</CardTitle>
-            <CardDescription>主密码用于保护密钥数据和管理页面访问</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Button variant="secondary" @click="openPasswordModal">
-          <Key class="w-4 h-4 mr-2" />
+    <div class="page-content">
+      <!-- 主密码设置 -->
+      <div class="settings-section">
+        <h3>主密码</h3>
+        <p class="settings-desc">主密码用于保护密钥数据和管理页面访问</p>
+        <button class="btn-secondary" @click="openPasswordModal">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
           修改主密码
-        </Button>
-      </CardContent>
-    </Card>
+        </button>
+      </div>
 
-    <!-- 备份加密设置 -->
-    <Card>
-      <CardHeader>
-        <div class="flex items-center gap-4">
-          <Shield class="w-5 h-5 text-primary" />
-          <div>
-            <CardTitle>备份加密</CardTitle>
-            <CardDescription>启用后导出的备份文件将加密存储</CardDescription>
+      <!-- 备份加密设置 -->
+      <div class="settings-section">
+        <h3>备份加密</h3>
+        <p class="settings-desc">启用后导出的备份文件将加密存储，导入时需要输入密码解密</p>
+
+        <div class="settings-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">启用备份加密</span>
+            <span class="settings-item-desc">导出备份时加密密钥数据</span>
           </div>
-        </div>
-      </CardHeader>
-      <CardContent class="space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="space-y-0.5">
-            <Label>启用备份加密</Label>
-            <p class="text-xs text-muted-foreground">导出备份时加密密钥数据</p>
-          </div>
-          <Switch v-model:checked="enableBackupEncryption" @update:checked="saveBackupSettings" />
+          <label class="toggle">
+            <input type="checkbox" v-model="enableBackupEncryption" @change="saveEncryptionSettings">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
 
-        <div v-if="enableBackupEncryption" class="ml-4 space-y-4 pl-4 border-l-2 border-primary/20">
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <Label>使用主密码作为备份密码</Label>
-              <p class="text-xs text-muted-foreground">无需单独记忆备份密码</p>
+        <div v-if="enableBackupEncryption" class="settings-subsection">
+          <div class="settings-item">
+            <div class="settings-item-info">
+              <span class="settings-item-label">使用主密码作为备份密码</span>
+              <span class="settings-item-desc">启用后将使用主密码加密备份，无需单独记忆</span>
             </div>
-            <Switch v-model:checked="useMasterPasswordForBackup" @update:checked="saveBackupSettings" />
+            <label class="toggle">
+              <input type="checkbox" v-model="useMasterPasswordForBackup" @change="saveEncryptionSettings">
+              <span class="toggle-slider"></span>
+            </label>
           </div>
-        </div>
-      </CardContent>
-    </Card>
 
-    <!-- 自动备份设置 -->
-    <Card>
-      <CardHeader>
-        <div class="flex items-center gap-4">
-          <Clock class="w-5 h-5 text-primary" />
-          <div>
-            <CardTitle>自动备份</CardTitle>
-            <CardDescription>定期检查并自动备份密钥数据，防止数据丢失</CardDescription>
+          <!-- 自定义备份密码 -->
+          <div v-if="!useMasterPasswordForBackup" class="custom-password-section">
+            <div class="form-group">
+              <label>备份密码</label>
+              <input type="password" v-model="backupPassword" class="form-input" placeholder="输入备份密码">
+            </div>
+            <div class="form-group">
+              <label>确认备份密码</label>
+              <input type="password" v-model="backupPasswordConfirm" class="form-input" placeholder="再次输入备份密码">
+            </div>
+            <p v-if="backupPasswordError" class="form-error">{{ backupPasswordError }}</p>
+            <button class="btn-secondary" @click="saveBackupPassword">保存备份密码</button>
           </div>
         </div>
-      </CardHeader>
-      <CardContent class="space-y-6">
-        <div class="flex items-center justify-between">
-          <div class="space-y-0.5">
-            <Label>启用自动备份</Label>
-            <p class="text-xs text-muted-foreground">距上次备份超过设定间隔时自动创建备份</p>
+      </div>
+
+      <!-- 自动备份设置 -->
+      <div class="settings-section">
+        <h3>自动备份</h3>
+        <p class="settings-desc">定期检查并自动备份密钥数据，防止数据丢失</p>
+
+        <div class="settings-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">启用自动备份</span>
+            <span class="settings-item-desc">距上次备份超过设定间隔时自动创建备份</span>
           </div>
-          <Switch v-model:checked="enableAutoBackup" @update:checked="saveBackupSettings" />
+          <label class="toggle">
+            <input type="checkbox" v-model="enableAutoBackup" @change="saveBackupSettings">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
 
-        <div v-if="enableAutoBackup" class="space-y-6 ml-4 pl-4 border-l-2 border-primary/20">
+        <div v-if="enableAutoBackup" class="settings-subsection">
           <!-- 备份频率 -->
-          <div class="space-y-2">
-            <Label>备份频率</Label>
-            <select
-              v-model="backupFrequency"
-              class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              @change="saveBackupSettings"
-            >
+          <div class="form-group">
+            <label>备份频率</label>
+            <select v-model="backupFrequency" class="form-select" @change="saveBackupSettings">
               <option value="daily">每天</option>
               <option value="weekly">每周</option>
               <option value="monthly">每月</option>
@@ -392,159 +440,564 @@ async function resetAllData() {
           </div>
 
           <!-- 本地快照 -->
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <Label>本地快照</Label>
-              <p class="text-xs text-muted-foreground">在浏览器中保留最近 5 个备份版本</p>
+          <div class="settings-item">
+            <div class="settings-item-info">
+              <span class="settings-item-label">本地快照</span>
+              <span class="settings-item-desc">在浏览器中保留最近 5 个备份版本</span>
             </div>
-            <Switch v-model:checked="enableLocalSnapshot" @update:checked="saveBackupSettings" />
+            <label class="toggle">
+              <input type="checkbox" v-model="enableLocalSnapshot" @change="saveBackupSettings">
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <!-- 目录备份 -->
-          <div class="space-y-4">
-            <div class="flex items-center justify-between">
-              <div class="space-y-0.5">
-                <Label>自动保存到本地目录</Label>
-                <p class="text-xs text-muted-foreground">授权目录后自动写入备份文件（需 Chrome 86+）</p>
+          <div class="settings-item">
+            <div class="settings-item-info">
+              <span class="settings-item-label">自动保存到本地目录</span>
+              <span class="settings-item-desc">授权目录后自动写入备份文件（需 Chrome 86+）</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="enableDirectoryBackup" @change="saveBackupSettings">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- 目录状态和选择 -->
+          <div v-if="enableDirectoryBackup" class="directory-section">
+            <div class="directory-status">
+              <div class="directory-info">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 0-2 2H4a2 2 0 0 0-2-2V5a2 2 0 0 0 2-2h5l2 3h9a2 2 0 0 0 2 2z"></path>
+                </svg>
+                <span>{{ directoryInfo.hasHandle ? `已选择: ${directoryInfo.name}` : '未选择目录' }}</span>
               </div>
-              <Switch v-model:checked="enableDirectoryBackup" />
+              <button class="btn-secondary btn-sm" @click="handleSelectDirectory">选择目录</button>
             </div>
 
-            <!-- 目录状态和选择 -->
-            <div v-if="enableDirectoryBackup" class="bg-muted/50 rounded-lg p-4 space-y-3">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <FolderOpen class="w-4 h-4 text-muted-foreground" />
-                  <span class="text-sm">
-                    {{ directoryInfo.hasHandle ? `已选择: ${directoryInfo.name}` : '未选择目录' }}
-                  </span>
-                </div>
-                <Button size="sm" variant="secondary" @click="handleSelectDirectory">
-                  选择目录
-                </Button>
-              </div>
-
-              <!-- 权限状态 -->
-              <div v-if="directoryInfo.hasHandle" class="flex items-center justify-between text-sm">
-                <div class="flex items-center gap-2">
-                  <template v-if="directoryInfo.permission === 'granted'">
-                    <Check class="w-4 h-4 text-green-500" />
-                    <span class="text-green-600">已授权，可自动写入</span>
-                  </template>
-                  <template v-else-if="directoryInfo.permission === 'prompt'">
-                    <AlertTriangle class="w-4 h-4 text-yellow-500" />
-                    <span class="text-yellow-600">需要授权才能写入</span>
-                  </template>
-                  <template v-else-if="directoryInfo.permission === 'denied'">
-                    <X class="w-4 h-4 text-red-500" />
-                    <span class="text-red-600">权限被拒绝，请重新选择</span>
-                  </template>
-                </div>
-                <Button
-                  v-if="directoryInfo.permission !== 'granted'"
-                  size="sm"
-                  variant="secondary"
-                  @click="handleRequestPermission"
-                >
-                  授权
-                </Button>
-              </div>
+            <!-- 权限状态 -->
+            <div v-if="directoryInfo.hasHandle" class="permission-status">
+              <template v-if="directoryInfo.permission === 'granted'">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span class="text-green-600">已授权，可自动写入</span>
+              </template>
+              <template v-else-if="directoryInfo.permission === 'prompt'">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-yellow-500">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span class="text-yellow-600">需要授权才能写入</span>
+                <button class="btn-secondary btn-sm" @click="handleRequestPermission">授权</button>
+              </template>
+              <template v-else-if="directoryInfo.permission === 'denied'">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="15" y1="9" x2="9" y2="15"></line>
+                  <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                <span class="text-red-600">权限被拒绝，请重新选择</span>
+              </template>
             </div>
+          </div>
 
-            <!-- 备份时间信息 -->
-            <div class="bg-muted/50 rounded-lg p-4 space-y-2">
-              <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">上次备份</span>
-                <span class="font-medium" :title="lastBackupTime ? new Date(lastBackupTime).toLocaleString('zh-CN') : ''">
-                  {{ formattedLastBackupTime }}
-                </span>
-              </div>
-              <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">下次备份</span>
-                <span class="font-medium" :class="{ 'text-yellow-600': formattedNextBackupTime === '待执行' }">
-                  {{ formattedNextBackupTime }}
-                </span>
-              </div>
+          <!-- 备份时间信息 -->
+          <div class="backup-info">
+            <div class="info-item">
+              <span class="info-label">上次备份</span>
+              <span class="info-value" :title="lastBackupTime ? new Date(lastBackupTime).toLocaleString('zh-CN') : ''">
+                {{ formattedLastBackupTime }}
+              </span>
             </div>
+            <div class="info-item">
+              <span class="info-label">下次备份</span>
+              <span class="info-value" :class="{ 'text-yellow-600': formattedNextBackupTime === '待执行' }">
+                {{ formattedNextBackupTime }}
+              </span>
+            </div>
+          </div>
 
-            <!-- 立即备份 -->
-            <Button variant="secondary" :disabled="backingUp" @click="handleBackupNow">
-              <Clock class="w-4 h-4 mr-2" />
-              {{ backingUp ? '备份中...' : '立即备份' }}
-            </Button>
-          </div>
+          <!-- 立即备份 -->
+          <button class="btn-secondary" :disabled="backingUp" @click="handleBackupNow">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            {{ backingUp ? '备份中...' : '立即备份' }}
+          </button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
 
-    <!-- 危险操作 -->
-    <Card class="border-destructive/50">
-      <CardHeader>
-        <div class="flex items-center gap-4">
-          <Trash2 class="w-5 h-5 text-destructive" />
-          <div>
-            <CardTitle class="text-destructive">危险操作</CardTitle>
-            <CardDescription>以下操作不可撤销，请谨慎使用</CardDescription>
+      <!-- 危险操作 -->
+      <div class="settings-section danger-zone">
+        <h3>危险操作</h3>
+        <p class="settings-desc">以下操作不可撤销，请谨慎使用</p>
+
+        <div class="settings-item danger-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">清空所有密钥</span>
+            <span class="settings-item-desc">删除所有密钥和备份快照，保留其他设置</span>
           </div>
-        </div>
-      </CardHeader>
-      <CardContent class="space-y-4">
-        <div class="flex items-center justify-between py-2 border-b">
-          <div>
-            <Label>清空所有密钥</Label>
-            <p class="text-xs text-muted-foreground">删除所有密钥和备份快照，保留其他设置</p>
-          </div>
-          <Button variant="destructive" size="sm" @click="clearAllSecrets">
-            清空密钥
-          </Button>
+          <button class="btn-danger" @click="clearAllSecrets">清空密钥</button>
         </div>
 
-        <div class="flex items-center justify-between py-2">
-          <div>
-            <Label>重置所有数据</Label>
-            <p class="text-xs text-muted-foreground">删除所有数据，恢复到初始状态</p>
+        <div class="settings-item danger-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">重置所有数据</span>
+            <span class="settings-item-desc">删除所有数据，恢复到初始状态</span>
           </div>
-          <Button variant="destructive" size="sm" @click="resetAllData">
-            重置数据
-          </Button>
+          <button class="btn-danger" @click="resetAllData">重置数据</button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
 
     <!-- 修改密码模态框 -->
-    <Dialog v-model:open="showPasswordModal">
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>修改主密码</DialogTitle>
-          <DialogDescription>请输入当前密码和新密码</DialogDescription>
-        </DialogHeader>
-
-        <div class="space-y-4 py-4">
-          <div class="space-y-2">
-            <Label for="current-password">当前密码</Label>
-            <Input id="current-password" v-model="currentPassword" type="password" placeholder="输入当前主密码" />
-          </div>
-
-          <div class="space-y-2">
-            <Label for="new-password">新密码</Label>
-            <Input id="new-password" v-model="newPassword" type="password" placeholder="输入新主密码" />
-          </div>
-
-          <div class="space-y-2">
-            <Label for="confirm-password">确认新密码</Label>
-            <Input id="confirm-password" v-model="confirmPassword" type="password" placeholder="再次输入新主密码" />
-          </div>
-
-          <p v-if="passwordError" class="text-sm text-destructive">
-            {{ passwordError }}
-          </p>
+    <div v-if="showPasswordModal" class="modal">
+      <div class="modal-overlay" @click="showPasswordModal = false"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>修改主密码</h3>
+          <button class="modal-close" @click="showPasswordModal = false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
         </div>
-
-        <DialogFooter>
-          <Button variant="secondary" @click="showPasswordModal = false">取消</Button>
-          <Button @click="changePassword">确认修改</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <form class="modal-form" @submit.prevent="changePassword">
+          <div class="form-group">
+            <label>当前密码</label>
+            <input type="password" v-model="currentPassword" class="form-input" placeholder="输入当前主密码">
+          </div>
+          <div class="form-group">
+            <label>新密码</label>
+            <input type="password" v-model="newPassword" class="form-input" placeholder="输入新主密码">
+          </div>
+          <div class="form-group">
+            <label>确认新密码</label>
+            <input type="password" v-model="confirmPassword" class="form-input" placeholder="再次输入新主密码">
+          </div>
+          <p v-if="passwordError" class="form-error">{{ passwordError }}</p>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" @click="showPasswordModal = false">取消</button>
+            <button type="submit" class="btn-primary">确认修改</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.settings-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 32px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.page-header h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.page-content {
+  flex: 1;
+  padding: 24px 32px;
+  overflow-y: auto;
+}
+
+.settings-section {
+  background: #ffffff;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 24px;
+}
+
+.settings-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.settings-desc {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 16px;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.settings-item:last-child {
+  border-bottom: none;
+}
+
+.settings-item-info {
+  flex: 1;
+}
+
+.settings-item-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1e293b;
+  margin-bottom: 2px;
+}
+
+.settings-item-desc {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.settings-subsection {
+  margin-top: 12px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.custom-password-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.form-group {
+  margin-bottom: 12px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  margin-bottom: 6px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #ffffff;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.form-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.form-error {
+  font-size: 13px;
+  color: #ef4444;
+  margin-top: 8px;
+}
+
+/* Toggle Switch */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #cbd5e1;
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle input:checked + .toggle-slider {
+  background-color: #4f46e5;
+}
+
+.toggle input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+}
+
+/* Directory Section */
+.directory-section {
+  margin-top: 12px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.directory-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.directory-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.permission-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+/* Backup Info */
+.backup-info {
+  display: flex;
+  gap: 24px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-top: 16px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.info-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1e293b;
+}
+
+/* Buttons */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #4338ca;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #4f46e5;
+  color: #4f46e5;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+/* Danger Zone */
+.danger-zone {
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.danger-zone h3 {
+  color: #ef4444;
+}
+
+.danger-item {
+  border-bottom-color: rgba(239, 68, 68, 0.2);
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+  position: relative;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  width: 90%;
+  max-width: 400px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #94a3b8;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+.modal-form {
+  padding: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+/* Utility */
+.text-green-500 { color: #10b981; }
+.text-green-600 { color: #059669; }
+.text-yellow-500 { color: #f59e0b; }
+.text-yellow-600 { color: #d97706; }
+.text-red-500 { color: #ef4444; }
+.text-red-600 { color: #dc2626; }
+</style>
