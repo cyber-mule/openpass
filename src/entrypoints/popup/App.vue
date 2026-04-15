@@ -86,11 +86,23 @@ onMounted(async () => {
 
   // 启动验证码更新
   startCodeUpdater();
+
+  // 监听 storage 变化，同步密钥数据
+  chrome.storage.onChanged.addListener(storageChangeListener);
 });
 
 onUnmounted(() => {
   clearAllTimers();
+  chrome.storage.onChanged.removeListener(storageChangeListener);
 });
+
+function storageChangeListener(changes: any) {
+  if (changes.secrets) {
+    secrets.value = changes.secrets.newValue || [];
+    clearAllTimers();
+    startCodeUpdater();
+  }
+}
 
 // Toast
 function showToast(message: string, success = false) {
