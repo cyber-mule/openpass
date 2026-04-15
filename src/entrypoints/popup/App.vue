@@ -456,16 +456,16 @@ async function overwriteImport() {
   startCodeUpdater();
 }
 
-// 打开管理页面
+// 打开管理页面（在新标签页打开，类似 LastPass）
 function openOptionsPage() {
   showMenu.value = false;
-  chrome.runtime.openOptionsPage();
+  chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
   window.close();
 }
 
 // 打开设置页面
 function openSetupPage() {
-  chrome.runtime.openOptionsPage();
+  chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
   window.close();
 }
 </script>

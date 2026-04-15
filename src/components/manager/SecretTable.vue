@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useSecretStore, type Secret } from '@/stores/secrets';
 import { TOTP } from '@/utils/totp';
 
@@ -13,28 +13,46 @@ const secretStore = useSecretStore();
 const emit = defineEmits<Emits>();
 
 const codeData = ref<Record<string, { code: string; remaining: number }>>({});
-const timers = ref<number[]>([]);
+let timerInterval: number | null = null;
 
 onMounted(() => {
-  startTimers();
+  startTimer();
 });
 
 onUnmounted(() => {
-  stopTimers();
+  stopTimer();
 });
 
-function startTimers() {
-  updateCodes();
-  const interval = window.setInterval(updateCodes, 1000);
-  timers.value.push(interval);
+// 监听 secrets 变化，为新密钥生成验证码
+watch(() => secretStore.secrets, async (newSecrets, oldSecrets) => {
+  const oldIds = new Set(oldSecrets?.map(s => s.id) || []);
+  for (const secret of newSecrets) {
+    if (!oldIds.has(secret.id) && !codeData.value[secret.id]) {
+      // 新增密钥，立即生成验证码
+      try {
+        const result = await TOTP.generateCode(secret.secret, secret.digits || 6);
+        codeData.value[secret.id] = {
+          code: TOTP.formatCode(result.code),
+          remaining: result.remainingSeconds
+        };
+      } catch {}
+    }
+  }
+}, { deep: true });
+
+function startTimer() {
+  updateAllCodes();
+  timerInterval = window.setInterval(updateAllCodes, 1000);
 }
 
-function stopTimers() {
-  timers.value.forEach(clearInterval);
-  timers.value = [];
+function stopTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
 }
 
-async function updateCodes() {
+async function updateAllCodes() {
   for (const secret of secretStore.secrets) {
     const existing = codeData.value[secret.id];
     if (existing && existing.remaining > 1) {
