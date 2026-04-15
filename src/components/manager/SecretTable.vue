@@ -24,24 +24,28 @@ onUnmounted(() => {
 });
 
 // 监听 secrets 变化，为新密钥生成验证码
-watch(() => secretStore.secrets, async (newSecrets, oldSecrets) => {
-  const oldIds = new Set(oldSecrets?.map(s => s.id) || []);
+watch(() => secretStore.secrets, async (newSecrets) => {
+  // 为所有密钥生成验证码（包括已存在的）
   for (const secret of newSecrets) {
-    if (!oldIds.has(secret.id) && !codeData.value[secret.id]) {
-      // 新增密钥，立即生成验证码
-      try {
-        const result = await TOTP.generateCode(secret.secret, secret.digits || 6);
-        codeData.value[secret.id] = {
-          code: TOTP.formatCode(result.code),
-          remaining: result.remainingSeconds
-        };
-      } catch {}
+    if (!codeData.value[secret.id]) {
+      await generateCodeForSecret(secret);
     }
   }
-}, { deep: true });
+}, { immediate: true, deep: true });
+
+async function generateCodeForSecret(secret: Secret) {
+  try {
+    const result = await TOTP.generateCode(secret.secret, secret.digits || 6);
+    codeData.value[secret.id] = {
+      code: TOTP.formatCode(result.code),
+      remaining: result.remainingSeconds
+    };
+  } catch {
+    // 忽略错误
+  }
+}
 
 function startTimer() {
-  updateAllCodes();
   timerInterval = window.setInterval(updateAllCodes, 1000);
 }
 
@@ -60,15 +64,7 @@ async function updateAllCodes() {
       continue;
     }
 
-    try {
-      const result = await TOTP.generateCode(secret.secret, secret.digits || 6);
-      codeData.value[secret.id] = {
-        code: TOTP.formatCode(result.code),
-        remaining: result.remainingSeconds
-      };
-    } catch {
-      // 忽略错误
-    }
+    await generateCodeForSecret(secret);
   }
 }
 

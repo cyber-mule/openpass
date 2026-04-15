@@ -47,21 +47,23 @@ export const useSecretStore = defineStore('secrets', () => {
     const authStore = useAuthStore();
     const sitesList = secrets.value.map(s => ({ site: s.site }));
 
+    // v0.1.0 设计: popup 无需认证，数据明文存储
+    // 始终保存明文版本供 popup 使用
+    const data: Record<string, any> = {
+      secrets: secrets.value,
+      sitesList
+    };
+
+    // 如果有 sessionKey，额外保存加密版本
     if (authStore.sessionKey) {
       const encrypted = await CryptoUtils.encrypt(
         JSON.stringify(secrets.value),
         authStore.sessionKey
       );
-      await chrome.storage.local.set({
-        encryptedSecrets: encrypted,
-        sitesList
-      });
-    } else {
-      await chrome.storage.local.set({
-        secrets: secrets.value,
-        sitesList
-      });
+      data.encryptedSecrets = encrypted;
     }
+
+    await chrome.storage.local.set(data);
   }
 
   async function addSecret(secretData: Omit<Secret, 'id' | 'createdAt' | 'updatedAt'>) {
