@@ -128,6 +128,11 @@ function handleModalClose() {
 function handleWelcomeClose() {
   showWelcome.value = false;
 }
+
+function handleWelcomeNavigate(page: string) {
+  showWelcome.value = false;
+  currentPage.value = page;
+}
 </script>
 
 <template>
@@ -173,6 +178,7 @@ function handleWelcomeClose() {
     <WelcomeGuide
       v-if="showWelcome"
       @close="handleWelcomeClose"
+      @navigate="handleWelcomeNavigate"
     />
   </div>
 </template>

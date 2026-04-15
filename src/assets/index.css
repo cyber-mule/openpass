@@ -57,3 +57,42 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Toast 样式 */
+.openpass-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  padding: 12px 20px;
+  background: #1e293b;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 10000;
+  opacity: 0;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.openpass-toast-show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.openpass-toast-success {
+  background: #10b981;
+}
+
+.openpass-toast-error {
+  background: #ef4444;
+}
+
+.openpass-toast-warning {
+  background: #f59e0b;
+  color: #1e293b;
+}
+
+.openpass-toast-default {
+  background: #1e293b;
+}

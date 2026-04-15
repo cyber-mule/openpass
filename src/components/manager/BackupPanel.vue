@@ -325,8 +325,8 @@ function resetImport() {
 
     <!-- 导入模态框 -->
     <div v-if="showImportModal" class="modal">
-      <div class="modal-overlay" @click="resetImport"></div>
-      <div class="modal-content">
+      <div class="modal-overlay"></div>
+      <div class="modal-content" @click.stop>
         <div class="modal-header">
           <h3>导入备份</h3>
           <button class="modal-close" @click="resetImport">

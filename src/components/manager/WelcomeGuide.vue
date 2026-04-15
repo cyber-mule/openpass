@@ -10,6 +10,7 @@ import { Check, ChevronDown } from 'lucide-vue-next';
 
 interface Emits {
   (e: 'close'): void;
+  (e: 'navigate', page: string): void;
 }
 
 const emit = defineEmits<Emits>();
@@ -236,7 +237,7 @@ function toggleStep(step: 'step1' | 'step2' | 'step3') {
 
             <div v-if="expandedStep === 'step3' && !steps.step3.completed" class="px-4 pb-4 border-t pt-4">
               <p class="text-sm text-muted-foreground mb-3">启用自动备份，防止数据丢失</p>
-              <Button variant="secondary" class="w-full" @click="emit('close')">去设置备份</Button>
+              <Button variant="secondary" class="w-full" @click="emit('navigate', 'settings')">去设置备份</Button>
             </div>
           </div>
         </CardContent>
