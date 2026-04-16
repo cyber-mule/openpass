@@ -324,8 +324,7 @@ function resetImport() {
     </div>
 
     <!-- 导入模态框 -->
-    <div v-if="showImportModal" class="modal">
-      <div class="modal-overlay"></div>
+    <div v-if="showImportModal" class="modal" @click="resetImport">
       <div class="modal-content" @click.stop>
         <div class="modal-header">
           <h3>导入备份</h3>
@@ -540,14 +539,6 @@ function resetImport() {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.modal-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
   background: rgba(0, 0, 0, 0.5);
 }
 
