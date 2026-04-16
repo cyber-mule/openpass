@@ -14,8 +14,13 @@ const emit = defineEmits<Emits>();
 
 const codeData = ref<Record<string, { code: string; remaining: number }>>({});
 let timerInterval: number | null = null;
+let initialized = false;
 
 onMounted(() => {
+  // 如果 secrets 已经加载完成，立即生成验证码
+  if (!secretStore.loading && secretStore.secrets.length > 0) {
+    initializeCodes();
+  }
   startTimer();
 });
 
@@ -23,15 +28,38 @@ onUnmounted(() => {
   stopTimer();
 });
 
-// 监听 secrets 变化，为新密钥生成验证码
-watch(() => secretStore.secrets, async (newSecrets) => {
-  // 为所有密钥生成验证码（包括已存在的）
-  for (const secret of newSecrets) {
-    if (!codeData.value[secret.id]) {
-      await generateCodeForSecret(secret);
+// 监听 loading 状态，当加载完成时初始化验证码
+watch(
+  () => secretStore.loading,
+  async (loading) => {
+    if (!loading && !initialized && secretStore.secrets.length > 0) {
+      await initializeCodes();
+      initialized = true;
     }
   }
-}, { immediate: true, deep: true });
+);
+
+// 监听 secrets 数组长度变化（添加/删除密钥）
+watch(
+  () => secretStore.secrets.length,
+  async (newLength, oldLength) => {
+    if (newLength > (oldLength || 0)) {
+      // 新增密钥，为新增的生成验证码
+      for (const secret of secretStore.secrets) {
+        if (!codeData.value[secret.id]) {
+          await generateCodeForSecret(secret);
+        }
+      }
+    }
+  }
+);
+
+async function initializeCodes() {
+  for (const secret of secretStore.secrets) {
+    await generateCodeForSecret(secret);
+  }
+  initialized = true;
+}
 
 async function generateCodeForSecret(secret: Secret) {
   try {
@@ -40,8 +68,8 @@ async function generateCodeForSecret(secret: Secret) {
       code: TOTP.formatCode(result.code),
       remaining: result.remainingSeconds
     };
-  } catch {
-    // 忽略错误
+  } catch (e) {
+    console.error('生成验证码失败:', secret.site, e);
   }
 }
 
