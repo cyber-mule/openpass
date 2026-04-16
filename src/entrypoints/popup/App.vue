@@ -63,7 +63,7 @@ onMounted(async () => {
     return;
   }
 
-  secrets.value = result.secrets || [];
+  secrets.value = Array.isArray(result.secrets) ? result.secrets : [];
 
   // 获取当前标签页
   try {
@@ -98,7 +98,8 @@ onUnmounted(() => {
 
 function storageChangeListener(changes: any) {
   if (changes.secrets) {
-    secrets.value = changes.secrets.newValue || [];
+    const newValue = changes.secrets.newValue;
+    secrets.value = Array.isArray(newValue) ? newValue : [];
     clearAllTimers();
     startCodeUpdater();
   }
@@ -116,6 +117,7 @@ function showToast(message: string, success = false) {
 
 // 计时器
 function startCodeUpdater() {
+  if (!Array.isArray(secrets.value)) return;
   secrets.value.forEach(secret => {
     startCardTimer(secret);
   });
@@ -166,7 +168,7 @@ function parseUrl(url: string) {
 
 // 匹配当前网站
 const currentSiteMatches = computed(() => {
-  if (!currentUrl.value) return [];
+  if (!currentUrl.value || !Array.isArray(secrets.value)) return [];
   const urlInfo = parseUrl(currentUrl.value);
   if (!urlInfo) return [];
 
@@ -181,7 +183,7 @@ const currentSiteMatches = computed(() => {
 
 // 搜索结果
 const searchResults = computed(() => {
-  if (!searchQuery.value) return [];
+  if (!searchQuery.value || !Array.isArray(secrets.value)) return [];
   const query = searchQuery.value.toLowerCase();
   return secrets.value.filter(s =>
     (s.name?.toLowerCase().includes(query)) ||
@@ -210,6 +212,7 @@ async function copyCode(secret: Secret) {
 
 // 保存密钥
 async function saveSecrets() {
+  if (!Array.isArray(secrets.value)) return;
   const sitesList = secrets.value.map(s => ({ site: s.site }));
   await chrome.storage.local.set({
     secrets: secrets.value,
@@ -309,6 +312,9 @@ function showEditPage(secret: Secret) {
 
 async function updateSecret() {
   if (!editingSecret.value) return;
+  if (!Array.isArray(secrets.value)) {
+    secrets.value = [];
+  }
 
   const secret = editingSecret.value.secret.toUpperCase().replace(/\s/g, '');
   if (!TOTP.isValidSecret(secret)) {
@@ -338,7 +344,7 @@ async function deleteSecret() {
   const name = editingSecret.value.name || editingSecret.value.site;
   if (confirm(`确定要删除 "${name}" 吗？`)) {
     const id = editingSecret.value.id;
-    secrets.value = secrets.value.filter(s => s.id !== id);
+    secrets.value = Array.isArray(secrets.value) ? secrets.value.filter(s => s.id !== id) : [];
     await saveSecrets();
     showToast('密钥已删除');
     currentPage.value = 'home';
@@ -349,7 +355,7 @@ async function deleteSecret() {
 // 导出
 async function exportSecrets() {
   showMenu.value = false;
-  if (secrets.value.length === 0) {
+  if (!Array.isArray(secrets.value) || secrets.value.length === 0) {
     showToast('没有可导出的密钥');
     return;
   }
@@ -425,6 +431,9 @@ async function handleFileSelect(e: Event) {
 
 async function mergeImport() {
   if (!pendingImportData.value?.secrets) return;
+  if (!Array.isArray(secrets.value)) {
+    secrets.value = [];
+  }
 
   let added = 0, skipped = 0;
   for (const secret of pendingImportData.value.secrets) {
@@ -455,7 +464,7 @@ async function overwriteImport() {
   if (!confirm('覆盖将删除所有现有密钥，确定继续吗？')) return;
 
   clearAllTimers();
-  secrets.value = pendingImportData.value.secrets.map(secret => ({
+  secrets.value = (pendingImportData.value.secrets || []).map(secret => ({
     ...secret,
     id: secret.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
     importedAt: new Date().toISOString()
