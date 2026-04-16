@@ -29,8 +29,9 @@ export const useSecretStore = defineStore('secrets', () => {
 
       if (result.encryptedSecrets && authStore.sessionKey) {
         const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, authStore.sessionKey);
-        secrets.value = JSON.parse(decrypted);
-      } else if (result.secrets) {
+        const parsed = JSON.parse(decrypted);
+        secrets.value = Array.isArray(parsed) ? parsed : [];
+      } else if (Array.isArray(result.secrets)) {
         secrets.value = result.secrets;
       } else {
         secrets.value = [];
@@ -38,6 +39,7 @@ export const useSecretStore = defineStore('secrets', () => {
     } catch (error) {
       console.error('加载密钥失败:', error);
       showToast('加载密钥失败', 'error');
+      secrets.value = [];
     } finally {
       loading.value = false;
     }
