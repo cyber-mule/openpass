@@ -167,7 +167,14 @@ async function decryptAndImport() {
       pendingImportData.value.encryptedData,
       importPassword.value
     );
-    pendingImportData.value.secrets = JSON.parse(decrypted);
+    const parsed = JSON.parse(decrypted);
+    // 验证解密后的数据是数组
+    if (!Array.isArray(parsed)) {
+      importPasswordError.value = '解密数据格式无效';
+      isImporting.value = false;
+      return;
+    }
+    pendingImportData.value.secrets = parsed;
     pendingImportData.value.encrypted = false;
     await performImport();
   } catch {
@@ -178,14 +185,15 @@ async function decryptAndImport() {
 
 // 执行导入
 async function performImport() {
-  if (!pendingImportData.value?.secrets) {
-    showToast('备份数据无效', 'error');
+  const secretsToImport = pendingImportData.value?.secrets;
+
+  if (!Array.isArray(secretsToImport) || secretsToImport.length === 0) {
+    showToast('备份数据无效或为空', 'error');
     resetImport();
     return;
   }
 
   isImporting.value = true;
-  const secretsToImport = pendingImportData.value.secrets;
 
   try {
     let addedCount = 0;

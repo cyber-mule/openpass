@@ -429,8 +429,44 @@ async function handleFileSelect(e: Event) {
   }
 }
 
+// 解密加密备份
+async function decryptImportBackup() {
+  if (!importPassword.value) {
+    importPasswordError.value = '请输入解密密码';
+    return false;
+  }
+
+  try {
+    const { default: CryptoUtils } = await import('@/utils/crypto');
+    const decrypted = await CryptoUtils.decrypt(
+      pendingImportData.value.encryptedData,
+      importPassword.value
+    );
+    const parsed = JSON.parse(decrypted);
+    if (!Array.isArray(parsed)) {
+      importPasswordError.value = '解密数据格式无效';
+      return false;
+    }
+    pendingImportData.value.secrets = parsed;
+    isEncryptedImport.value = false;
+    return true;
+  } catch {
+    importPasswordError.value = '解密失败，请检查密码是否正确';
+    return false;
+  }
+}
+
 async function mergeImport() {
-  if (!pendingImportData.value?.secrets) return;
+  // 如果是加密备份，先解密
+  if (isEncryptedImport.value) {
+    if (!await decryptImportBackup()) return;
+  }
+
+  if (!pendingImportData.value?.secrets || !Array.isArray(pendingImportData.value.secrets)) {
+    showToast('备份数据无效');
+    return;
+  }
+
   if (!Array.isArray(secrets.value)) {
     secrets.value = [];
   }
@@ -456,15 +492,26 @@ async function mergeImport() {
   await saveSecrets();
   showRestoreModal.value = false;
   pendingImportData.value = null;
+  importPassword.value = '';
+  importPasswordError.value = '';
   showToast(skipped > 0 ? `已导入 ${added} 个，跳过 ${skipped} 个重复` : `已导入 ${added} 个密钥`, true);
 }
 
 async function overwriteImport() {
-  if (!pendingImportData.value?.secrets) return;
+  // 如果是加密备份，先解密
+  if (isEncryptedImport.value) {
+    if (!await decryptImportBackup()) return;
+  }
+
+  if (!pendingImportData.value?.secrets || !Array.isArray(pendingImportData.value.secrets)) {
+    showToast('备份数据无效');
+    return;
+  }
+
   if (!confirm('覆盖将删除所有现有密钥，确定继续吗？')) return;
 
   clearAllTimers();
-  secrets.value = (pendingImportData.value.secrets || []).map(secret => ({
+  secrets.value = pendingImportData.value.secrets.map(secret => ({
     ...secret,
     id: secret.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
     importedAt: new Date().toISOString()
@@ -473,6 +520,8 @@ async function overwriteImport() {
   await saveSecrets();
   showRestoreModal.value = false;
   pendingImportData.value = null;
+  importPassword.value = '';
+  importPasswordError.value = '';
   showToast(`已导入 ${secrets.value.length} 个密钥`, true);
   startCodeUpdater();
 }

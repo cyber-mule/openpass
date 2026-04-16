@@ -154,8 +154,12 @@ export const useSecretStore = defineStore('secrets', () => {
 
     if (data.encrypted && data.encryptedData && password) {
       const decrypted = await CryptoUtils.decrypt(data.encryptedData, password);
-      importedSecrets = JSON.parse(decrypted);
-    } else if (data.secrets) {
+      const parsed = JSON.parse(decrypted);
+      if (!Array.isArray(parsed)) {
+        throw new Error('解密数据格式无效');
+      }
+      importedSecrets = parsed;
+    } else if (Array.isArray(data.secrets)) {
       importedSecrets = data.secrets;
     } else if (Array.isArray(data)) {
       importedSecrets = data;
