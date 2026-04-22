@@ -1,10 +1,11 @@
 {
   "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
-    "baseUrl": ".",
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
     "paths": {
       "@/*": ["./src/*"]
     },
+    "types": ["chrome"],
     "allowImportingTsExtensions": true,
     "isolatedModules": true
   }

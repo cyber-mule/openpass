@@ -1,16 +1,22 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { useSecretStore } from '@/stores/secrets';
 import { useAuthStore } from '@/stores/auth';
 import { useAutoBackup, type DirectoryInfo } from '@/composables/useAutoBackup';
+import { getErrorMessage } from '@/utils/error';
 import { showToast } from '@/utils/ui';
 import CryptoUtils from '@/utils/crypto';
+import {
+  getBackupEncryptionSettings,
+  resolveStoredBackupPassword
+} from '@/utils/backup';
 
 const secretStore = useSecretStore();
 const authStore = useAuthStore();
 const autoBackup = useAutoBackup();
 
-// 自动备份设置
+const isInitialized = ref(false);
+
 const enableAutoBackup = ref(false);
 const backupFrequency = ref<'daily' | 'weekly' | 'monthly'>('weekly');
 const enableLocalSnapshot = ref(true);
@@ -18,24 +24,20 @@ const enableDirectoryBackup = ref(false);
 const lastBackupTime = ref<string | null>(null);
 const nextBackupTime = ref<string | null>(null);
 
-// 目录备份
 const directoryInfo = ref<DirectoryInfo>({ hasHandle: false, name: null, permission: 'no-handle' });
 
-// 主密码修改
 const showPasswordModal = ref(false);
 const currentPassword = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
 const passwordError = ref('');
 
-// 备份加密设置
 const enableBackupEncryption = ref(false);
 const useMasterPasswordForBackup = ref(true);
 const backupPassword = ref('');
 const backupPasswordConfirm = ref('');
 const backupPasswordError = ref('');
 
-// 立即备份
 const backingUp = ref(false);
 
 onMounted(async () => {
@@ -51,20 +53,15 @@ async function loadAllSettings() {
   lastBackupTime.value = autoBackup.settings.value.lastBackupTime;
   nextBackupTime.value = autoBackup.settings.value.nextBackupTime;
 
-  // 加载目录信息
   directoryInfo.value = await autoBackup.getDirectoryInfo();
 
-  // 加载备份加密设置
-  const encryptionResult = await chrome.storage.local.get([
-    'enableBackupEncryption',
-    'useMasterPasswordForBackup',
-    'backupPasswordHash'
-  ]);
-  enableBackupEncryption.value = encryptionResult.enableBackupEncryption || false;
-  useMasterPasswordForBackup.value = encryptionResult.useMasterPasswordForBackup !== false;
+  const encryptionResult = await getBackupEncryptionSettings();
+  enableBackupEncryption.value = encryptionResult.enableBackupEncryption;
+  useMasterPasswordForBackup.value = encryptionResult.useMasterPasswordForBackup;
+
+  isInitialized.value = true;
 }
 
-// 格式化时间显示
 const formattedLastBackupTime = computed(() => {
   if (!lastBackupTime.value) return '从未备份';
 
@@ -97,11 +94,16 @@ const formattedNextBackupTime = computed(() => {
   return '即将';
 });
 
-// 监听目录备份开关
 watch(enableDirectoryBackup, async (enabled) => {
+  if (!isInitialized.value) return;
+
   if (enabled && !directoryInfo.value.hasHandle) {
     await handleSelectDirectory();
+    if (!directoryInfo.value.hasHandle) {
+      enableDirectoryBackup.value = false;
+    }
   }
+
   await saveBackupSettings();
 });
 
@@ -113,17 +115,20 @@ async function saveBackupSettings() {
     enableDirectoryBackup: enableDirectoryBackup.value
   });
 
-  // 计算下次备份时间
-  if (enableAutoBackup.value) {
-    const interval = autoBackup.getBackupInterval(backupFrequency.value);
-    const last = lastBackupTime.value ? new Date(lastBackupTime.value) : new Date();
-    const next = new Date(last.getTime() + interval);
-    nextBackupTime.value = next.toISOString();
-    await autoBackup.saveSettings({ nextBackupTime: nextBackupTime.value });
+  if (!enableAutoBackup.value) {
+    nextBackupTime.value = null;
+    await autoBackup.clearAlarm();
+    return;
   }
+
+  const interval = autoBackup.getBackupInterval(backupFrequency.value);
+  const last = lastBackupTime.value ? new Date(lastBackupTime.value) : new Date();
+  const next = new Date(last.getTime() + interval);
+  nextBackupTime.value = next.toISOString();
+  await autoBackup.saveSettings({ nextBackupTime: nextBackupTime.value });
+  await autoBackup.setupAlarm();
 }
 
-// 保存加密设置
 async function saveEncryptionSettings() {
   await chrome.storage.local.set({
     enableBackupEncryption: enableBackupEncryption.value,
@@ -131,13 +136,17 @@ async function saveEncryptionSettings() {
   });
 
   if (enableBackupEncryption.value) {
-    showToast(useMasterPasswordForBackup.value ? '已启用备份加密，使用主密码' : '已启用备份加密，请设置自定义密码', 'success');
+    showToast(
+      useMasterPasswordForBackup.value
+        ? '已启用备份加密，将使用主密码'
+        : '已启用备份加密，请保存自定义备份密码',
+      'success'
+    );
   } else {
     showToast('已禁用备份加密', 'success');
   }
 }
 
-// 保存自定义备份密码
 async function saveBackupPassword() {
   if (!backupPassword.value) {
     backupPasswordError.value = '请输入备份密码';
@@ -155,11 +164,23 @@ async function saveBackupPassword() {
   }
 
   try {
+    if (!authStore.sessionKey) {
+      backupPasswordError.value = '请先重新验证主密码';
+      return;
+    }
+
     const { hash, salt } = await CryptoUtils.createMasterPasswordHash(backupPassword.value);
+    const encryptedBackupPassword = await CryptoUtils.encrypt(
+      backupPassword.value,
+      authStore.sessionKey
+    );
+
     await chrome.storage.local.set({
       backupPasswordHash: hash,
-      backupPasswordSalt: salt
+      backupPasswordSalt: salt,
+      encryptedBackupPassword
     });
+
     backupPasswordError.value = '';
     backupPassword.value = '';
     backupPasswordConfirm.value = '';
@@ -199,51 +220,47 @@ async function handleBackupNow() {
 
   backingUp.value = true;
   try {
-    let password = null;
+    let password: string | undefined;
 
-    // 如果启用加密且使用主密码
-    if (enableBackupEncryption.value && useMasterPasswordForBackup.value) {
-      password = authStore.sessionKey;
+    if (enableBackupEncryption.value) {
+      const encryptionSettings = await getBackupEncryptionSettings();
+      password = await resolveStoredBackupPassword(authStore.sessionKey, encryptionSettings);
+
       if (!password) {
-        showToast('请先验证主密码', 'error');
-        backingUp.value = false;
+        showToast(
+          encryptionSettings.useMasterPasswordForBackup
+            ? '请先验证主密码'
+            : '请先在设置中保存备份密码，并保持当前已解锁',
+          'error'
+        );
         return;
       }
-    } else if (enableBackupEncryption.value && !useMasterPasswordForBackup.value) {
-      // 使用自定义备份密码
-      const result = await chrome.storage.local.get(['backupPasswordHash', 'backupPasswordSalt']);
-      if (!result.backupPasswordHash) {
-        showToast('请先设置备份密码', 'error');
-        backingUp.value = false;
-        return;
-      }
-      // 这里需要用户输入密码，暂时跳过
-      showToast('自定义密码备份需要重新验证', 'warning');
-      backingUp.value = false;
-      return;
     }
 
     const results = await autoBackup.performBackup(secretStore.secrets, { password });
-
-    // 更新显示
     lastBackupTime.value = autoBackup.settings.value.lastBackupTime;
     nextBackupTime.value = autoBackup.settings.value.nextBackupTime;
 
-    // 显示结果
     const messages = [];
     if (results.snapshot) messages.push('本地快照已保存');
-    if (results.directory?.success) messages.push(`文件已保存: ${results.directory.filename}`);
+    if (results.directory?.success) messages.push(`文件已保存到 ${results.directory.filename}`);
 
     if (messages.length > 0) {
       showToast(messages.join('，'), 'success');
-    } else if (results.directory && !results.directory.success) {
+      return;
+    }
+
+    if (results.directory && !results.directory.success) {
       if (results.directory.needAuth) {
         directoryInfo.value = await autoBackup.getDirectoryInfo();
       }
       showToast(results.directory.error || '备份失败', 'error');
+      return;
     }
-  } catch (error: any) {
-    showToast('备份失败: ' + error.message, 'error');
+
+    showToast('未启用任何备份目标', 'warning');
+  } catch (error) {
+    showToast(`备份失败: ${getErrorMessage(error)}`, 'error');
   } finally {
     backingUp.value = false;
   }
@@ -274,7 +291,11 @@ async function changePassword() {
   }
 
   try {
-    const result = await chrome.storage.local.get(['masterPasswordHash', 'masterPasswordSalt']);
+    const result = await chrome.storage.local.get<{
+      masterPasswordHash?: string;
+      masterPasswordSalt?: string;
+    }>(['masterPasswordHash', 'masterPasswordSalt']);
+
     if (!result.masterPasswordHash || !result.masterPasswordSalt) {
       passwordError.value = '系统错误';
       return;
@@ -291,50 +312,73 @@ async function changePassword() {
       return;
     }
 
-    // 创建新密码哈希
     const newHash = await CryptoUtils.createMasterPasswordHash(newPassword.value);
+    const secretsResult = await chrome.storage.local.get<{
+      encryptedSecrets?: string;
+      encryptedBackupPassword?: string;
+    }>(['encryptedSecrets', 'encryptedBackupPassword']);
 
-    // 如果有加密的密钥，需要重新加密
-    const secretsResult = await chrome.storage.local.get(['encryptedSecrets']);
-    if (secretsResult.encryptedSecrets) {
-      const decrypted = await CryptoUtils.decrypt(secretsResult.encryptedSecrets, currentPassword.value);
+    let nextEncryptedBackupPassword =
+      typeof secretsResult.encryptedBackupPassword === 'string'
+        ? secretsResult.encryptedBackupPassword
+        : null;
+
+    if (nextEncryptedBackupPassword) {
+      const decryptedBackupPassword = await CryptoUtils.decrypt(
+        nextEncryptedBackupPassword,
+        currentPassword.value
+      );
+      nextEncryptedBackupPassword = await CryptoUtils.encrypt(
+        decryptedBackupPassword,
+        newPassword.value
+      );
+    }
+
+    if (typeof secretsResult.encryptedSecrets === 'string') {
+      const decrypted = await CryptoUtils.decrypt(
+        secretsResult.encryptedSecrets,
+        currentPassword.value
+      );
       const newEncrypted = await CryptoUtils.encrypt(decrypted, newPassword.value);
       await chrome.storage.local.set({
         masterPasswordHash: newHash.hash,
         masterPasswordSalt: newHash.salt,
-        encryptedSecrets: newEncrypted
+        encryptedSecrets: newEncrypted,
+        encryptedBackupPassword: nextEncryptedBackupPassword
       });
     } else {
       await chrome.storage.local.set({
         masterPasswordHash: newHash.hash,
-        masterPasswordSalt: newHash.salt
+        masterPasswordSalt: newHash.salt,
+        encryptedBackupPassword: nextEncryptedBackupPassword
       });
     }
 
     await authStore.createSession(newPassword.value);
     showPasswordModal.value = false;
     showToast('主密码已更新', 'success');
-  } catch (error: any) {
-    passwordError.value = '修改失败: ' + error.message;
+  } catch (error) {
+    passwordError.value = `修改失败: ${getErrorMessage(error)}`;
   }
 }
 
 async function clearAllSecrets() {
-  if (!confirm('确定要清空所有密钥吗？此操作不可撤销！')) return;
+  const confirmation = prompt('请输入 "DELETE" 确认清空所有密钥');
+  if (confirmation !== 'DELETE') return;
 
   try {
     secretStore.secrets = [];
     await secretStore.saveSecrets();
     await chrome.storage.local.remove(['backupSnapshots']);
     showToast('所有密钥已清空', 'success');
-  } catch (error: any) {
-    showToast('清空失败: ' + error.message, 'error');
+  } catch (error) {
+    showToast(`清空失败: ${getErrorMessage(error)}`, 'error');
   }
 }
 
 async function resetAllData() {
-  if (!confirm('确定要重置所有数据吗？此操作将删除所有密钥、设置和主密码！')) return;
-  if (!confirm('再次确认：这将永久删除所有数据！')) return;
+  const confirmation = prompt('请输入 "RESET" 确认重置所有数据');
+  if (confirmation !== 'RESET') return;
 
   try {
     await chrome.storage.local.clear();
@@ -342,8 +386,8 @@ async function resetAllData() {
     await autoBackup.removeHandle();
     showToast('所有数据已重置', 'success');
     window.location.reload();
-  } catch (error: any) {
-    showToast('重置失败: ' + error.message, 'error');
+  } catch (error) {
+    showToast(`重置失败: ${getErrorMessage(error)}`, 'error');
   }
 }
 </script>
@@ -358,7 +402,7 @@ async function resetAllData() {
       <!-- 主密码设置 -->
       <div class="settings-section">
         <h3>主密码</h3>
-        <p class="settings-desc">主密码用于保护密钥数据和管理页面访问</p>
+        <p class="settings-desc">主密码用于保护密钥数据和管理页面访问。</p>
         <button class="btn-secondary" @click="openPasswordModal">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
@@ -371,7 +415,7 @@ async function resetAllData() {
       <!-- 备份加密设置 -->
       <div class="settings-section">
         <h3>备份加密</h3>
-        <p class="settings-desc">启用后导出的备份文件将加密存储，导入时需要输入密码解密</p>
+        <p class="settings-desc">启用后导出的备份文件将加密保存，导入时需要输入密码解密。</p>
 
         <div class="settings-item">
           <div class="settings-item-info">
@@ -379,7 +423,7 @@ async function resetAllData() {
             <span class="settings-item-desc">导出备份时加密密钥数据</span>
           </div>
           <label class="toggle">
-            <input type="checkbox" v-model="enableBackupEncryption" @change="saveEncryptionSettings">
+            <input v-model="enableBackupEncryption" type="checkbox" @change="saveEncryptionSettings">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -391,7 +435,7 @@ async function resetAllData() {
               <span class="settings-item-desc">启用后将使用主密码加密备份，无需单独记忆</span>
             </div>
             <label class="toggle">
-              <input type="checkbox" v-model="useMasterPasswordForBackup" @change="saveEncryptionSettings">
+              <input v-model="useMasterPasswordForBackup" type="checkbox" @change="saveEncryptionSettings">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -400,11 +444,11 @@ async function resetAllData() {
           <div v-if="!useMasterPasswordForBackup" class="custom-password-section">
             <div class="form-group">
               <label>备份密码</label>
-              <input type="password" v-model="backupPassword" class="form-input" placeholder="输入备份密码">
+              <input v-model="backupPassword" type="password" class="form-input" placeholder="输入备份密码">
             </div>
             <div class="form-group">
               <label>确认备份密码</label>
-              <input type="password" v-model="backupPasswordConfirm" class="form-input" placeholder="再次输入备份密码">
+              <input v-model="backupPasswordConfirm" type="password" class="form-input" placeholder="再次输入备份密码">
             </div>
             <p v-if="backupPasswordError" class="form-error">{{ backupPasswordError }}</p>
             <button class="btn-secondary" @click="saveBackupPassword">保存备份密码</button>
@@ -415,15 +459,15 @@ async function resetAllData() {
       <!-- 自动备份设置 -->
       <div class="settings-section">
         <h3>自动备份</h3>
-        <p class="settings-desc">定期检查并自动备份密钥数据，防止数据丢失</p>
+        <p class="settings-desc">定期检查并自动备份密钥数据，防止数据丢失。</p>
 
         <div class="settings-item">
           <div class="settings-item-info">
             <span class="settings-item-label">启用自动备份</span>
-            <span class="settings-item-desc">距上次备份超过设定间隔时自动创建备份</span>
+            <span class="settings-item-desc">距离上次备份超过设定间隔时自动创建备份</span>
           </div>
           <label class="toggle">
-            <input type="checkbox" v-model="enableAutoBackup" @change="saveBackupSettings">
+            <input v-model="enableAutoBackup" type="checkbox" @change="saveBackupSettings">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -446,7 +490,7 @@ async function resetAllData() {
               <span class="settings-item-desc">在浏览器中保留最近 5 个备份版本</span>
             </div>
             <label class="toggle">
-              <input type="checkbox" v-model="enableLocalSnapshot" @change="saveBackupSettings">
+              <input v-model="enableLocalSnapshot" type="checkbox" @change="saveBackupSettings">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -455,10 +499,10 @@ async function resetAllData() {
           <div class="settings-item">
             <div class="settings-item-info">
               <span class="settings-item-label">自动保存到本地目录</span>
-              <span class="settings-item-desc">授权目录后自动写入备份文件（需 Chrome 86+）</span>
+              <span class="settings-item-desc">授权目录后自动写入备份文件，需要 Chrome 86+</span>
             </div>
             <label class="toggle">
-              <input type="checkbox" v-model="enableDirectoryBackup" @change="saveBackupSettings">
+              <input v-model="enableDirectoryBackup" type="checkbox" @change="saveBackupSettings">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -547,7 +591,7 @@ async function resetAllData() {
         <div class="settings-item danger-item">
           <div class="settings-item-info">
             <span class="settings-item-label">重置所有数据</span>
-            <span class="settings-item-desc">删除所有数据，恢复到初始状态</span>
+            <span class="settings-item-desc">删除所有数据并恢复到初始状态</span>
           </div>
           <button class="btn-danger" @click="resetAllData">重置数据</button>
         </div>
@@ -570,15 +614,20 @@ async function resetAllData() {
         <form class="modal-form" @submit.prevent="changePassword">
           <div class="form-group">
             <label>当前密码</label>
-            <input type="password" v-model="currentPassword" class="form-input" placeholder="输入当前主密码">
+            <input
+              v-model="currentPassword"
+              type="password"
+              class="form-input"
+              placeholder="输入当前主密码"
+            >
           </div>
           <div class="form-group">
             <label>新密码</label>
-            <input type="password" v-model="newPassword" class="form-input" placeholder="输入新主密码">
+            <input v-model="newPassword" type="password" class="form-input" placeholder="输入新的主密码">
           </div>
           <div class="form-group">
             <label>确认新密码</label>
-            <input type="password" v-model="confirmPassword" class="form-input" placeholder="再次输入新主密码">
+            <input v-model="confirmPassword" type="password" class="form-input" placeholder="再次输入新的主密码">
           </div>
           <p v-if="passwordError" class="form-error">{{ passwordError }}</p>
           <div class="modal-footer">
@@ -1001,3 +1050,5 @@ async function resetAllData() {
 .text-red-500 { color: #ef4444; }
 .text-red-600 { color: #dc2626; }
 </style>
+
+

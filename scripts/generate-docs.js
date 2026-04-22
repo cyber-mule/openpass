@@ -5,7 +5,6 @@
 
 const puppeteer = require('puppeteer-core');
 const path = require('path');
-const fs = require('fs');
 
 async function generateDocs() {
   const browser = await puppeteer.launch({
@@ -68,7 +67,7 @@ async function generateDocs() {
 
   // 为每个章节单独截图
   for (let i = 0; i < sections.length; i++) {
-    const section = sections[i];
+    
     const element = await page.$(`.section:nth-child(${i + 3})`); // +3 因为有封面等元素
 
     if (element) {

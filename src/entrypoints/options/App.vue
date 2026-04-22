@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useSecretStore } from '@/stores/secrets';
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
@@ -21,6 +21,75 @@ const showWelcome = ref(false);
 const showSecretModal = ref(false);
 const editingSecret = ref<Secret | null>(null);
 const loading = ref(true);
+let lastActivityAt = 0;
+
+function getAuthRedirect() {
+  const redirect = window.location.pathname.split('/').pop() || 'options.html';
+  return `/auth.html?redirect=${redirect}`;
+}
+
+function redirectToAuth() {
+  window.location.href = getAuthRedirect();
+}
+
+async function ensureAuthenticated() {
+  const authenticated = await authStore.checkSession();
+  if (!authenticated) {
+    redirectToAuth();
+    return false;
+  }
+
+  return true;
+}
+
+async function handleActivity() {
+  const now = Date.now();
+  if (now - lastActivityAt < 30 * 1000) {
+    return;
+  }
+
+  lastActivityAt = now;
+  await authStore.updateActivity();
+}
+
+async function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    await ensureAuthenticated();
+  }
+}
+
+function setupActivityListener() {
+  document.addEventListener('click', handleActivity);
+  document.addEventListener('keydown', handleActivity);
+  document.addEventListener('mousemove', handleActivity, { passive: true });
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+}
+
+function cleanupActivityListener() {
+  document.removeEventListener('click', handleActivity);
+  document.removeEventListener('keydown', handleActivity);
+  document.removeEventListener('mousemove', handleActivity);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+}
+
+async function handleStorageChange(
+  changes: Record<string, chrome.storage.StorageChange>,
+  areaName: chrome.storage.AreaName
+) {
+  if (areaName !== 'local') {
+    return;
+  }
+
+  if (!changes.secrets && !changes.encryptedSecrets) {
+    return;
+  }
+
+  await secretStore.loadSecrets();
+
+  if (currentPage.value === 'secrets') {
+    shortcuts.setTotal(secretStore.getFilteredSecrets().length);
+  }
+}
 
 // 键盘快捷键
 const shortcuts = useKeyboardShortcuts({
@@ -36,22 +105,22 @@ const shortcuts = useKeyboardShortcuts({
   onSettings: () => currentPage.value = 'settings',
   onHelp: () => currentPage.value = 'about',
   onEdit: () => {
-    if (currentPage.value === 'secrets' && secretStore.getFilteredSecrets().length > 0) {
-      const first = secretStore.getFilteredSecrets()[0];
-      editSecret(first);
+    const selectedSecret = getSelectedSecret();
+    if (currentPage.value === 'secrets' && selectedSecret) {
+      editSecret(selectedSecret);
     }
   },
   onDelete: async () => {
-    if (currentPage.value === 'secrets' && secretStore.getFilteredSecrets().length > 0) {
-      const first = secretStore.getFilteredSecrets()[0];
-      await secretStore.deleteSecret(first.id);
+    const selectedSecret = getSelectedSecret();
+    if (currentPage.value === 'secrets' && selectedSecret) {
+      await secretStore.deleteSecret(selectedSecret.id);
     }
   },
   onCopy: async () => {
-    if (currentPage.value === 'secrets' && secretStore.getFilteredSecrets().length > 0) {
-      const first = secretStore.getFilteredSecrets()[0];
+    const selectedSecret = getSelectedSecret();
+    if (currentPage.value === 'secrets' && selectedSecret) {
       const { TOTP } = await import('@/utils/totp');
-      const result = await TOTP.generateCode(first.secret, first.digits || 6);
+      const result = await TOTP.generateCode(selectedSecret.secret, selectedSecret.digits || 6);
       await TOTP.copyToClipboard(result.code);
       showToast('验证码已复制', 'success');
     }
@@ -79,14 +148,12 @@ onMounted(async () => {
     return;
   }
 
-  if (!authStore.isAuthenticated) {
-    const urlParams = new URLSearchParams(window.location.search);
-    const redirect = urlParams.get('redirect') || 'options.html';
-    window.location.href = `/auth.html?redirect=${redirect}`;
+  if (!(await ensureAuthenticated())) {
     return;
   }
 
   await secretStore.loadSecrets();
+  await authStore.updateActivity();
 
   // 检查是否需要显示欢迎引导
   const result = await chrome.storage.local.get(['isSetupComplete', 'welcomeCompleted', 'secrets']);
@@ -96,17 +163,35 @@ onMounted(async () => {
 
   shortcuts.register();
   shortcuts.setTotal(secretStore.secrets.length);
+  setupActivityListener();
+  chrome.storage.onChanged.addListener(handleStorageChange);
 
   loading.value = false;
 });
 
 onUnmounted(() => {
   shortcuts.unregister();
+  cleanupActivityListener();
+  chrome.storage.onChanged.removeListener(handleStorageChange);
 });
 
 function addSecret() {
   editingSecret.value = null;
   showSecretModal.value = true;
+}
+
+function getSelectedSecret() {
+  const filteredSecrets = secretStore.getFilteredSecrets();
+  if (filteredSecrets.length === 0) {
+    return null;
+  }
+
+  const selectedIndex = shortcuts.selectedIndex.value;
+  if (selectedIndex >= 0 && selectedIndex < filteredSecrets.length) {
+    return filteredSecrets[selectedIndex];
+  }
+
+  return filteredSecrets[0];
 }
 
 function editSecret(secret: Secret) {
@@ -131,8 +216,27 @@ function handleWelcomeClose() {
 
 function handleWelcomeNavigate(page: string) {
   showWelcome.value = false;
+  if (page === 'secrets:add') {
+    currentPage.value = 'secrets';
+    addSecret();
+    return;
+  }
+
   currentPage.value = page;
 }
+
+watch(
+  () => [currentPage.value, secretStore.searchQuery, secretStore.secrets.length],
+  () => {
+    if (currentPage.value !== 'secrets') {
+      shortcuts.setTotal(0);
+      shortcuts.clearSelection();
+      return;
+    }
+
+    shortcuts.setTotal(secretStore.getFilteredSecrets().length);
+  }
+);
 </script>
 
 <template>
@@ -152,6 +256,7 @@ function handleWelcomeNavigate(page: string) {
       <!-- 密钥管理页 -->
       <SecretTable
         v-if="currentPage === 'secrets'"
+        :selected-index="shortcuts.selectedIndex.value"
         @add="addSecret"
         @edit="editSecret"
         @delete="deleteSecret"

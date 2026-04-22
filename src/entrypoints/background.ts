@@ -1,5 +1,50 @@
+﻿import jsQR from 'jsqr';
+import { TOTP } from 'otpauth';
+import {
+  createBackupData,
+  getBackupEncryptionSettings,
+  resolveStoredBackupPassword,
+  saveBackupSnapshot
+} from '@/utils/backup';
+
+type BackupFrequency = 'daily' | 'weekly' | 'monthly';
+
+interface StoredSecret {
+  secret: string;
+  site: string;
+  name?: string;
+  digits?: number;
+}
+
+type PendingSecret = StoredSecret;
+
+interface SiteListItem {
+  site: string;
+}
+
+const BACKUP_DB_NAME = 'OpenPassBackupDB';
+const BACKUP_DB_VERSION = 1;
+const BACKUP_HANDLE_STORE = 'handles';
+
 export default defineBackground(() => {
-  importScripts('/jsQR.min.js', '/totp.js');
+  // SessionKey 内存缓存，供自动备份解密使用
+  let cachedSessionKey: string | null = null;
+
+  // 启动时自动修复 secrets 结构
+  (async () => {
+    const result = await chrome.storage.local.get<{
+      secrets?: StoredSecret[];
+      encryptedSecrets?: string;
+    }>(['secrets', 'encryptedSecrets']);
+    if (!Array.isArray(result.secrets)) {
+      console.warn('[Background] secrets 格式异常，尝试修复');
+      // 如果存在 encryptedSecrets，等待用户解锁后修复
+      // 如果没有数据，则初始化为空数组
+      if (!result.encryptedSecrets) {
+        await chrome.storage.local.set({ secrets: [], sitesList: [] });
+      }
+    }
+  })();
 
   // 创建右键菜单
   chrome.runtime.onInstalled.addListener((details) => {
@@ -15,16 +60,10 @@ export default defineBackground(() => {
       periodInMinutes: 60 // 每小时检查一次
     });
 
-    // 首次安装时自动打开管理页面（新窗口）
+    // 首次安装时自动打开管理页面
     if (details.reason === 'install') {
       const url = chrome.runtime.getURL('options.html');
-      chrome.windows.create({
-        url,
-        type: 'normal',
-        width: 1200,
-        height: 800,
-        focused: true
-      });
+      chrome.tabs.create({ url });
     }
   });
 
@@ -39,22 +78,91 @@ export default defineBackground(() => {
 
       try {
         const secret = await parseQRFromImageUrl(info.srcUrl);
-        if (secret) {
+      if (secret) {
           await storePendingSecret(secret, tab);
           chrome.action.openPopup();
         } else {
           showNotification('识别失败', '未能识别有效的 TOTP 密钥');
         }
       } catch (error) {
-        console.error('解析 QR 码失败:', error);
+        console.error('解析 QR 码失败', error);
         showNotification('识别失败', '无法读取图片中的 QR 码');
       }
     }
   });
 
   async function checkSetupComplete(): Promise<boolean> {
-    const result = await chrome.storage.local.get(['isSetupComplete']);
+    const result = await chrome.storage.local.get<{ isSetupComplete?: boolean }>(['isSetupComplete']);
     return result.isSetupComplete === true;
+  }
+
+  async function openBackupDB(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(BACKUP_DB_NAME, BACKUP_DB_VERSION);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(BACKUP_HANDLE_STORE)) {
+          db.createObjectStore(BACKUP_HANDLE_STORE);
+        }
+      };
+    });
+  }
+
+  async function getStoredBackupHandle(): Promise<FileSystemDirectoryHandle | null> {
+    const db = await openBackupDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(BACKUP_HANDLE_STORE, 'readonly');
+      const store = transaction.objectStore(BACKUP_HANDLE_STORE);
+      const request = store.get('backupDirectory');
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result || null);
+    });
+  }
+
+  async function writeBackupToDirectory(backupData: unknown) {
+    try {
+      const handle = await getStoredBackupHandle();
+      if (!handle) {
+        return { success: false, error: '未选择备份目录', needAuth: false };
+      }
+
+      let permission = (await handle.queryPermission?.({ mode: 'readwrite' })) ?? 'prompt';
+      if (permission === 'prompt') {
+        permission = (await handle.requestPermission?.({ mode: 'readwrite' })) ?? 'denied';
+      }
+
+      if (permission !== 'granted') {
+        return {
+          success: false,
+          error: permission === 'denied' ? '权限被拒绝，请重新授权备份目录' : '需要授权写入权限',
+          needAuth: true
+        };
+      }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const suffix =
+        typeof backupData === 'object' && backupData !== null && 'encrypted' in backupData &&
+        (backupData as { encrypted?: boolean }).encrypted
+          ? '-encrypted'
+          : '';
+      const filename = `openpass-backup-${timestamp}${suffix}.json`;
+
+      const fileHandle = await handle.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(backupData, null, 2));
+      await writable.close();
+
+      return { success: true, filename };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '写入备份目录失败'
+      };
+    }
   }
 
   async function parseQRFromImageUrl(url: string) {
@@ -72,17 +180,22 @@ export default defineBackground(() => {
       const imageBitmap = await createImageBitmap(blob);
       const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
       const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('2D canvas context unavailable');
+      }
       ctx.drawImage(imageBitmap, 0, 0);
 
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = (globalThis as any).jsQR(imageData.data, imageData.width, imageData.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert'
+      });
 
       if (code && code.data) {
         return parseOTPAuthUrl(code.data);
       }
       return null;
     } catch (error) {
-      console.error('解析 QR 码失败:', error);
+      console.error('解析 QR 码失败', error);
       throw error;
     }
   }
@@ -123,7 +236,7 @@ export default defineBackground(() => {
     return null;
   }
 
-  async function storePendingSecret(secret: any, tab: chrome.tabs.Tab) {
+  async function storePendingSecret(secret: PendingSecret, tab?: chrome.tabs.Tab) {
     let pageUrl = '';
     if (tab && tab.url) {
       pageUrl = tab.url;
@@ -150,12 +263,33 @@ export default defineBackground(() => {
     if (request.action === 'generateCode') {
       (async () => {
         try {
-          const result = await (globalThis as any).TOTP.generate(request.secret, request.digits || 6);
-          sendResponse({ code: result.code, remainingSeconds: result.remainingSeconds });
+          const totp = new TOTP({
+            secret: request.secret,
+            algorithm: 'SHA1',
+            digits: request.digits || 6,
+            period: 30
+          });
+          const code = totp.generate();
+          const time = Math.floor(Date.now() / 1000);
+          const remainingSeconds = 30 - (time % 30);
+          sendResponse({ code, remainingSeconds });
         } catch (error) {
           sendResponse({ error: (error as Error).message });
         }
       })();
+      return true;
+    }
+
+    // 缓存 sessionKey，供用户解锁时写入
+    if (request.action === 'cacheSessionKey') {
+      cachedSessionKey = request.sessionKey || null;
+      sendResponse({ success: true });
+      return true;
+    }
+
+    // 获取缓存的 sessionKey，供自动备份使用
+    if (request.action === 'getCachedSessionKey') {
+      sendResponse({ sessionKey: cachedSessionKey });
       return true;
     }
 
@@ -176,13 +310,23 @@ export default defineBackground(() => {
             return;
           }
 
-          const result = await chrome.storage.local.get(['encryptedSecrets', 'secrets']);
-          if (result.encryptedSecrets && request.sessionKey) {
+          const result = await chrome.storage.local.get<{
+            encryptedSecrets?: string;
+            secrets?: StoredSecret[];
+          }>(['encryptedSecrets', 'secrets']);
+
+          // 优先尝试用缓存的 sessionKey 解密
+          if (typeof result.encryptedSecrets === 'string' && cachedSessionKey) {
+            const CryptoUtils = await import('../utils/crypto');
+            const decrypted = await CryptoUtils.default.decrypt(result.encryptedSecrets, cachedSessionKey);
+            const secrets = JSON.parse(decrypted);
+            sendResponse({ secrets });
+          } else if (typeof result.encryptedSecrets === 'string' && typeof request.sessionKey === 'string') {
             const CryptoUtils = await import('../utils/crypto');
             const decrypted = await CryptoUtils.default.decrypt(result.encryptedSecrets, request.sessionKey);
             const secrets = JSON.parse(decrypted);
             sendResponse({ secrets });
-          } else if (result.secrets) {
+          } else if (Array.isArray(result.secrets)) {
             sendResponse({ secrets: result.secrets });
           } else {
             sendResponse({ secrets: [] });
@@ -214,8 +358,9 @@ export default defineBackground(() => {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local' && (changes.secrets || changes.encryptedSecrets || changes.sitesList)) {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0] && tabs[0].url) {
-          updateBadgeForTab(tabs[0].id, tabs[0].url);
+        const activeTab = tabs[0];
+        if (activeTab?.url && typeof activeTab.id === 'number') {
+          updateBadgeForTab(activeTab.id, activeTab.url);
         }
       });
     }
@@ -233,77 +378,121 @@ export default defineBackground(() => {
       const checkResult = await checkBackupNeeded();
       if (!checkResult.needed) return;
 
-      const settings = await chrome.storage.local.get([
+      const settings = await chrome.storage.local.get<{
+        enableAutoBackup?: boolean;
+        backupFrequency?: BackupFrequency;
+        enableLocalSnapshot?: boolean;
+        enableDirectoryBackup?: boolean;
+        encryptedSecrets?: string;
+        secrets?: StoredSecret[];
+      }>([
         'enableAutoBackup',
+        'backupFrequency',
         'enableLocalSnapshot',
         'enableDirectoryBackup',
         'encryptedSecrets',
         'secrets'
       ]);
 
-      if (!settings.enableAutoBackup) return;
+      if (settings.enableAutoBackup !== true) return;
 
-      let secrets = [];
-      if (settings.encryptedSecrets) {
-        console.log('OpenPass: 密钥已加密，需要用户交互才能备份');
-        showNotification('自动备份提醒', '请打开 OpenPass 完成备份');
-        return;
-      } else if (settings.secrets) {
+      let secrets: StoredSecret[] = [];
+      
+      // 如果存在加密密钥，尝试使用缓存的 sessionKey 解密
+      if (typeof settings.encryptedSecrets === 'string') {
+        if (!cachedSessionKey) {
+          return; // 用户未解锁，跳过备份
+        }
+        
+        try {
+          const CryptoUtils = await import('../utils/crypto');
+          const decrypted = await CryptoUtils.default.decrypt(
+            settings.encryptedSecrets,
+            cachedSessionKey
+          );
+          secrets = JSON.parse(decrypted);
+        } catch (error) {
+          console.error('OpenPass: 自动备份解密失败', error);
+          return;
+        }
+      } else if (Array.isArray(settings.secrets)) {
         secrets = settings.secrets;
       }
 
       if (secrets.length === 0) return;
 
-      const backupData = {
-        format: 'openpass-backup',
-        formatVersion: 1,
-        appVersion: chrome.runtime.getManifest().version,
-        exportTime: new Date().toISOString(),
-        count: secrets.length,
-        encrypted: false,
-        secrets
-      };
+      const encryptionSettings = await getBackupEncryptionSettings();
+      const backupPassword = await resolveStoredBackupPassword(
+        cachedSessionKey,
+        encryptionSettings
+      );
+
+      if (encryptionSettings.enableBackupEncryption && !backupPassword) {
+        return;
+      }
+
+      const backupData = await createBackupData(secrets, backupPassword);
+      let savedSnapshot = false;
+      let directoryResult:
+        | { success: boolean; filename?: string; error?: string; needAuth?: boolean }
+        | undefined;
 
       if (settings.enableLocalSnapshot) {
-        const result = await chrome.storage.local.get(['backupSnapshots']);
-        let snapshots = result.backupSnapshots || [];
-
-        snapshots.unshift({
-          data: backupData,
-          timestamp: new Date().toISOString(),
-          count: backupData.count
-        });
-
-        if (snapshots.length > 5) {
-          snapshots = snapshots.slice(0, 5);
-        }
-
-        await chrome.storage.local.set({ backupSnapshots: snapshots });
+        await saveBackupSnapshot(backupData);
+        savedSnapshot = true;
       }
+
+      if (settings.enableDirectoryBackup) {
+        directoryResult = await writeBackupToDirectory(backupData);
+      }
+
+      if (!savedSnapshot && !directoryResult?.success) {
+        if (directoryResult?.error) {
+          showNotification('自动备份失败', directoryResult.error);
+        }
+        return;
+      }
+
+      const interval = {
+        daily: 24 * 60 * 60 * 1000,
+        weekly: 7 * 24 * 60 * 60 * 1000,
+        monthly: 30 * 24 * 60 * 60 * 1000
+      }[(settings.backupFrequency ?? 'weekly') as BackupFrequency] || 7 * 24 * 60 * 60 * 1000;
+      const now = new Date();
 
       await chrome.storage.local.set({
-        lastBackupTime: new Date().toISOString()
+        lastBackupTime: now.toISOString(),
+        nextBackupTime: new Date(now.getTime() + interval).toISOString()
       });
 
-      console.log('OpenPass: 自动备份完成');
-
-      if (settings.enableLocalSnapshot) {
-        showNotification('自动备份完成', `已备份 ${secrets.length} 个密钥到本地快照`);
+      const messages = [];
+      if (savedSnapshot) {
+        messages.push(`已备份 ${secrets.length} 个密钥到本地快照`);
       }
-    } catch (error) {
+      if (directoryResult?.success) {
+        messages.push(`已写入 ${directoryResult.filename}`);
+      }
+
+      if (messages.length > 0) {
+        showNotification('自动备份完成', messages.join('；'));
+      }    } catch (error) {
       console.error('OpenPass: 自动备份失败', error);
       showNotification('自动备份失败', (error as Error).message);
     }
   }
 
   async function checkBackupNeeded() {
-    const settings = await chrome.storage.local.get([
+    const settings = await chrome.storage.local.get<{
+      enableAutoBackup?: boolean;
+      backupFrequency?: BackupFrequency;
+      lastBackupTime?: string;
+    }>([
       'enableAutoBackup',
       'backupFrequency',
       'lastBackupTime'
     ]);
 
-    if (!settings.enableAutoBackup) {
+    if (settings.enableAutoBackup !== true) {
       return { needed: false, reason: 'disabled' };
     }
 
@@ -311,13 +500,13 @@ export default defineBackground(() => {
       return { needed: true, reason: 'never' };
     }
 
-    const intervals: Record<string, number> = {
+    const intervals: Record<BackupFrequency, number> = {
       daily: 24 * 60 * 60 * 1000,
       weekly: 7 * 24 * 60 * 60 * 1000,
       monthly: 30 * 24 * 60 * 60 * 1000
     };
 
-    const interval = intervals[settings.backupFrequency] || intervals.weekly;
+    const interval = intervals[settings.backupFrequency ?? 'weekly'] || intervals.weekly;
     const lastBackup = new Date(settings.lastBackupTime);
     const elapsed = Date.now() - lastBackup.getTime();
 
@@ -369,11 +558,15 @@ export default defineBackground(() => {
 
   function safeSetBadge(tabId: number, text: string, color: string | null = null) {
     chrome.action.setBadgeText({ tabId, text }, () => {
-      if (chrome.runtime.lastError) {}
+      if (chrome.runtime.lastError) {
+        return;
+      }
     });
     if (color) {
       chrome.action.setBadgeBackgroundColor({ tabId, color }, () => {
-        if (chrome.runtime.lastError) {}
+        if (chrome.runtime.lastError) {
+          return;
+        }
       });
     }
   }
@@ -384,10 +577,13 @@ export default defineBackground(() => {
       return;
     }
 
-    const result = await chrome.storage.local.get(['sitesList', 'secrets']);
-    let sites = result.sitesList || [];
-    if (sites.length === 0 && result.secrets) {
-      sites = result.secrets.map((s: any) => ({ site: s.site }));
+    const result = await chrome.storage.local.get<{
+      sitesList?: SiteListItem[];
+      secrets?: StoredSecret[];
+    }>(['sitesList', 'secrets']);
+    let sites = Array.isArray(result.sitesList) ? result.sitesList : [];
+    if (sites.length === 0 && Array.isArray(result.secrets)) {
+      sites = result.secrets.map((secret) => ({ site: secret.site }));
     }
 
     const urlInfo = parseUrl(url);
@@ -415,3 +611,5 @@ export default defineBackground(() => {
     }
   }
 });
+
+

@@ -29,15 +29,15 @@ function getExtensionKey(): string {
 
 export default defineConfig({
   srcDir: 'src',
+  manifestVersion: 3,
   vite: () => ({
     plugins: [UnoCSS()]
   }),
   manifest: {
-    manifest_version: 3,
     name: 'OpenPass',
     version: '0.2.0',
     description: '开源的 2FA 认证工具，本地存储密钥，一键生成验证码',
-    author: 'cyber-mule',
+    options_page: 'options.html',
     homepage_url: 'https://github.com/cyber-mule/openpass',
     key: getExtensionKey(),
     permissions: [

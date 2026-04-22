@@ -2,6 +2,11 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useSecretStore, type Secret } from '@/stores/secrets';
 import { TOTP } from '@/utils/totp';
+import { showToast } from '@/utils/ui';
+
+interface Props {
+  selectedIndex?: number;
+}
 
 interface Emits {
   (e: 'add'): void;
@@ -10,6 +15,9 @@ interface Emits {
 }
 
 const secretStore = useSecretStore();
+withDefaults(defineProps<Props>(), {
+  selectedIndex: -1
+});
 const emit = defineEmits<Emits>();
 
 const codeData = ref<Record<string, { code: string; remaining: number }>>({});
@@ -100,6 +108,7 @@ async function copyCode(secret: Secret) {
   const code = codeData.value[secret.id];
   if (code) {
     await TOTP.copyToClipboard(code.code.replace(' ', ''));
+    showToast('验证码已复制', 'success');
   }
 }
 
@@ -158,9 +167,10 @@ function getProgressClass(remaining: number): string {
             </td>
           </tr>
           <tr
-            v-for="secret in secretStore.getFilteredSecrets()"
+            v-for="(secret, index) in secretStore.getFilteredSecrets()"
             :key="secret.id"
-            class="hover:bg-gray-50 cursor-pointer transition-colors"
+            class="cursor-pointer transition-colors"
+            :class="index === selectedIndex ? 'bg-primary-50 ring-1 ring-inset ring-primary-200' : 'hover:bg-gray-50'"
           >
             <td class="px-6 py-4">
               <div class="text-sm font-medium text-gray-900">{{ secret.name || '未命名' }}</div>
@@ -170,7 +180,13 @@ function getProgressClass(remaining: number): string {
             </td>
             <td class="px-6 py-4">
               <div v-if="codeData[secret.id]" class="flex items-center space-x-2">
-                <span class="text-lg font-mono font-semibold">{{ codeData[secret.id].code }}</span>
+                <span
+                  class="text-lg font-mono font-semibold cursor-pointer hover:text-primary-600 transition-colors"
+                  title="点击复制验证码"
+                  @click="copyCode(secret)"
+                >
+                  {{ codeData[secret.id].code }}
+                </span>
                 <span
                   class="text-xs font-mono"
                   :class="getProgressClass(codeData[secret.id].remaining)"

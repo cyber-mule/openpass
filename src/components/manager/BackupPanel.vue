@@ -1,58 +1,63 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { useSecretStore } from '@/stores/secrets';
-import { useAutoBackup } from '@/composables/useAutoBackup';
+import { computed, onMounted, ref } from 'vue';
+import { useSecretStore, type Secret } from '@/stores/secrets';
 import { useAuthStore } from '@/stores/auth';
+import { getErrorMessage } from '@/utils/error';
 import { showToast } from '@/utils/ui';
-import CryptoUtils from '@/utils/crypto';
+import {
+  type BackupData,
+  buildSecretIdentity,
+  checkBackupCompatibility,
+  createBackupData,
+  decryptBackupData,
+  getBackupEncryptionSettings,
+  migrateBackupData,
+  resolveStoredBackupPassword,
+  validateBackupData
+} from '@/utils/backup';
 
 const secretStore = useSecretStore();
-const autoBackup = useAutoBackup();
 const authStore = useAuthStore();
 
-// 导出相关
+type ImportAction = 'skip' | 'overwrite' | 'both';
+type ImportBackupData = BackupData<Secret>;
+
 const exportPassword = ref('');
 const isExporting = ref(false);
 
-// 导入相关
-const importFile = ref<HTMLInputElement | null>(null);
 const isReadingFile = ref(false);
-const pendingImportData = ref<any>(null);
+const pendingImportData = ref<ImportBackupData | null>(null);
 const isEncryptedBackup = ref(false);
 const importPassword = ref('');
 const importPasswordError = ref('');
 const showImportModal = ref(false);
 const isImporting = ref(false);
-const importAction = ref<'merge' | 'overwrite'>('merge');
+const importAction = ref<ImportAction>('skip');
+const compatibilityHint = ref('');
 
-// 加密设置
 const enableBackupEncryption = ref(false);
 const useMasterPasswordForBackup = ref(true);
 
-// 备份信息
 const backupInfo = computed(() => {
-  if (!pendingImportData.value) return null;
+  if (!pendingImportData.value) {
+    return null;
+  }
+
   return {
     version: pendingImportData.value.appVersion || '未知',
     exportTime: pendingImportData.value.exportTime
       ? new Date(pendingImportData.value.exportTime).toLocaleString('zh-CN')
       : '-',
-    count: pendingImportData.value.count || pendingImportData.value.secrets?.length || 0,
-    encrypted: isEncryptedBackup.value
+    count: pendingImportData.value.count || pendingImportData.value.secrets?.length || 0
   };
 });
 
 onMounted(async () => {
-  // 加载加密设置
-  const result = await chrome.storage.local.get([
-    'enableBackupEncryption',
-    'useMasterPasswordForBackup'
-  ]);
-  enableBackupEncryption.value = result.enableBackupEncryption || false;
-  useMasterPasswordForBackup.value = result.useMasterPasswordForBackup !== false;
+  const result = await getBackupEncryptionSettings();
+  enableBackupEncryption.value = result.enableBackupEncryption;
+  useMasterPasswordForBackup.value = result.useMasterPasswordForBackup;
 });
 
-// 导出备份
 async function handleExport() {
   if (secretStore.secrets.length === 0) {
     showToast('没有可导出的密钥', 'warning');
@@ -62,46 +67,54 @@ async function handleExport() {
   isExporting.value = true;
 
   try {
-    let password: string | undefined = undefined;
+    let password: string | undefined;
 
-    // 如果启用了加密
     if (enableBackupEncryption.value) {
-      if (useMasterPasswordForBackup.value && authStore.sessionKey) {
-        password = authStore.sessionKey;
-      } else if (exportPassword.value) {
+      const encryptionSettings = await getBackupEncryptionSettings();
+
+      if (exportPassword.value) {
         password = exportPassword.value;
       } else {
-        showToast('加密备份需要密码，请先设置密码或在下方输入', 'warning');
-        isExporting.value = false;
+        password = await resolveStoredBackupPassword(authStore.sessionKey, encryptionSettings);
+      }
+
+      if (!password) {
+        showToast(
+          encryptionSettings.useMasterPasswordForBackup
+            ? '请先验证主密码'
+            : '请先在设置页保存备份密码，或在此处临时输入',
+          'warning'
+        );
         return;
       }
     }
 
-    const backupData = await autoBackup.createBackup(secretStore.secrets, { password });
-
-    const json = JSON.stringify(backupData, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
+    const backupData = await createBackupData(secretStore.secrets, password);
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], {
+      type: 'application/json'
+    });
     const url = URL.createObjectURL(blob);
-
     const suffix = password ? '-encrypted' : '';
     const filename = `openpass-backup-${new Date().toISOString().split('T')[0]}${suffix}.json`;
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
     URL.revokeObjectURL(url);
 
-    showToast(`已导出 ${secretStore.secrets.length} 个密钥${password ? '（已加密）' : ''}`, 'success');
+    showToast(
+      `已导出 ${secretStore.secrets.length} 个密钥${password ? '（已加密）' : ''}`,
+      'success'
+    );
     exportPassword.value = '';
-  } catch (error: any) {
-    showToast('导出失败: ' + error.message, 'error');
+  } catch (error) {
+    showToast(`导出失败: ${getErrorMessage(error)}`, 'error');
   } finally {
     isExporting.value = false;
   }
 }
 
-// 选择文件导入
 function triggerImport() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -110,41 +123,42 @@ function triggerImport() {
   input.click();
 }
 
-async function handleFileSelect(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
+async function handleFileSelect(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) {
+    return;
+  }
 
   isReadingFile.value = true;
 
   try {
     const content = await file.text();
-    const data = JSON.parse(content);
+    const validation = validateBackupData<Secret>(JSON.parse(content));
 
-    // 验证备份格式
-    if (data.format === 'openpass-backup') {
-      if (data.encrypted && data.encryptedData) {
-        pendingImportData.value = data;
-        isEncryptedBackup.value = true;
-      } else if (Array.isArray(data.secrets)) {
-        pendingImportData.value = data;
-        isEncryptedBackup.value = false;
-      }
-    } else if (Array.isArray(data)) {
-      pendingImportData.value = { secrets: data, count: data.length };
-      isEncryptedBackup.value = false;
-    } else if (Array.isArray(data.secrets)) {
-      pendingImportData.value = data;
-      isEncryptedBackup.value = false;
-    } else {
-      showToast('无法识别的备份格式', 'error');
-      isReadingFile.value = false;
+    if (!validation.valid || !validation.data) {
+      showToast(validation.error || '无法识别的备份格式', 'error');
       return;
     }
 
+    const compatibility = checkBackupCompatibility(validation.data.appVersion || '0.0.0');
+    if (!compatibility.compatible) {
+      showToast(compatibility.message, 'error');
+      return;
+    }
+
+    let backupData = validation.data;
+    compatibilityHint.value = compatibility.level === 'warning' ? compatibility.message : '';
+
+    if (compatibility.level === 'warning' && !validation.encrypted) {
+      backupData = migrateBackupData(backupData);
+    }
+
+    pendingImportData.value = backupData;
+    isEncryptedBackup.value = validation.encrypted === true;
     showImportModal.value = true;
     importPassword.value = '';
     importPasswordError.value = '';
-    importAction.value = 'merge';
+    importAction.value = 'skip';
   } catch {
     showToast('读取文件失败', 'error');
   } finally {
@@ -152,10 +166,41 @@ async function handleFileSelect(e: Event) {
   }
 }
 
-// 解密并导入
+function normalizeImportedSecret(secret: Secret): Secret {
+  return {
+    ...secret,
+    id: secret.id || crypto.randomUUID(),
+    secret: String(secret.secret || '').trim().toUpperCase().replace(/\s/g, ''),
+    site: String(secret.site || '').trim().toLowerCase(),
+    digits: typeof secret.digits === 'number' ? secret.digits : 6
+  };
+}
+
+async function getImportPasswordCandidates() {
+  const manualPassword = importPassword.value.trim();
+  if (manualPassword) {
+    return [{ password: manualPassword, source: 'manual' as const }];
+  }
+
+  const candidates: Array<{ password: string; source: 'session' | 'stored' }> = [];
+
+  if (authStore.sessionKey) {
+    candidates.push({ password: authStore.sessionKey, source: 'session' });
+  }
+
+  const encryptionSettings = await getBackupEncryptionSettings();
+  const storedPassword = await resolveStoredBackupPassword(authStore.sessionKey, encryptionSettings);
+
+  if (storedPassword && storedPassword !== authStore.sessionKey) {
+    candidates.push({ password: storedPassword, source: 'stored' });
+  }
+
+  return candidates;
+}
+
 async function decryptAndImport() {
-  if (!importPassword.value) {
-    importPasswordError.value = '请输入解密密码';
+  if (!pendingImportData.value) {
+    importPasswordError.value = '备份数据无效';
     return;
   }
 
@@ -163,27 +208,69 @@ async function decryptAndImport() {
   importPasswordError.value = '';
 
   try {
-    const decrypted = await CryptoUtils.decrypt(
-      pendingImportData.value.encryptedData,
-      importPassword.value
-    );
-    const parsed = JSON.parse(decrypted);
-    // 验证解密后的数据是数组
-    if (!Array.isArray(parsed)) {
-      importPasswordError.value = '解密数据格式无效';
+    const candidates = await getImportPasswordCandidates();
+    if (candidates.length === 0) {
+      importPasswordError.value = authStore.sessionKey
+        ? '请输入该备份对应的加密密码'
+        : '请输入备份密码，或先重新验证主密码';
       isImporting.value = false;
       return;
     }
-    pendingImportData.value.secrets = parsed;
-    pendingImportData.value.encrypted = false;
+
+    let decryptedSecrets: Secret[] | null = null;
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      try {
+        decryptedSecrets = await decryptBackupData(pendingImportData.value, candidate.password);
+        break;
+      } catch (error) {
+        lastError = error;
+        if (candidate.source === 'manual') {
+          break;
+        }
+      }
+    }
+
+    if (!decryptedSecrets) {
+      importPasswordError.value = importPassword.value.trim()
+        ? getErrorMessage(lastError, '解密失败，请检查备份密码是否正确')
+        : authStore.sessionKey
+          ? '当前主密码或已保存的备份密码无法解密该备份，请输入该备份对应的密码'
+          : '请输入该备份对应的加密密码';
+      isImporting.value = false;
+      return;
+    }
+
+    let decryptedBackup: ImportBackupData = {
+      ...pendingImportData.value,
+      encrypted: false,
+      encryptedData: undefined,
+      secrets: decryptedSecrets,
+      count: decryptedSecrets.length
+    };
+
+    const compatibility = checkBackupCompatibility(decryptedBackup.appVersion || '0.0.0');
+    if (!compatibility.compatible) {
+      importPasswordError.value = compatibility.message;
+      isImporting.value = false;
+      return;
+    }
+
+    compatibilityHint.value = compatibility.level === 'warning' ? compatibility.message : '';
+    if (compatibility.level === 'warning') {
+      decryptedBackup = migrateBackupData(decryptedBackup);
+    }
+
+    pendingImportData.value = decryptedBackup;
+    isEncryptedBackup.value = false;
     await performImport();
-  } catch {
-    importPasswordError.value = '解密失败，请检查密码是否正确';
+  } catch (error) {
+    importPasswordError.value = getErrorMessage(error, '解密失败，请检查备份密码是否正确');
     isImporting.value = false;
   }
 }
 
-// 执行导入
 async function performImport() {
   const secretsToImport = pendingImportData.value?.secrets;
 
@@ -197,52 +284,63 @@ async function performImport() {
 
   try {
     let addedCount = 0;
+    let updatedCount = 0;
     let skippedCount = 0;
 
-    if (importAction.value === 'overwrite') {
-      // 覆盖模式
-      if (!confirm('覆盖将删除所有现有密钥，确定继续吗？')) {
-        isImporting.value = false;
-        return;
+    for (const secret of secretsToImport.map(normalizeImportedSecret)) {
+      const existingIndex = secretStore.secrets.findIndex(
+        (item) => buildSecretIdentity(item) === buildSecretIdentity(secret)
+      );
+
+      if (existingIndex === -1) {
+        secretStore.secrets.push({
+          ...secret,
+          importedAt: new Date().toISOString()
+        });
+        addedCount += 1;
+        continue;
       }
-      secretStore.secrets = secretsToImport.map((secret: any) => ({
+
+      if (importAction.value === 'skip') {
+        skippedCount += 1;
+        continue;
+      }
+
+      if (importAction.value === 'overwrite') {
+        secretStore.secrets[existingIndex] = {
+          ...secretStore.secrets[existingIndex],
+          ...secret,
+          id: secretStore.secrets[existingIndex].id,
+          createdAt: secretStore.secrets[existingIndex].createdAt,
+          updatedAt: new Date().toISOString()
+        };
+        updatedCount += 1;
+        continue;
+      }
+
+      secretStore.secrets.push({
         ...secret,
-        id: secret.id || crypto.randomUUID(),
+        id: crypto.randomUUID(),
+        site: `${secret.site}-${crypto.randomUUID().slice(0, 8)}`,
         importedAt: new Date().toISOString()
-      }));
-      addedCount = secretsToImport.length;
-    } else {
-      // 合并模式
-      for (const secret of secretsToImport) {
-        const exists = secretStore.secrets.some(
-          s => s.site.toLowerCase() === secret.site?.toLowerCase()
-        );
-        if (!exists) {
-          secretStore.secrets.push({
-            ...secret,
-            id: secret.id || crypto.randomUUID(),
-            importedAt: new Date().toISOString()
-          });
-          addedCount++;
-        } else {
-          skippedCount++;
-        }
-      }
+      });
+      addedCount += 1;
     }
 
-    await secretStore.saveSecrets();
+    await secretStore.saveSecrets({ triggerSnapshot: true });
+    resetImport();
 
-    showImportModal.value = false;
-    pendingImportData.value = null;
+    const messages = [];
+    if (addedCount > 0) messages.push(`新增 ${addedCount} 个`);
+    if (updatedCount > 0) messages.push(`更新 ${updatedCount} 个`);
+    if (skippedCount > 0) messages.push(`跳过 ${skippedCount} 个`);
 
     showToast(
-      skippedCount > 0 
-        ? `已导入 ${addedCount} 个，跳过 ${skippedCount} 个重复` 
-        : `已导入 ${addedCount} 个密钥`,
+      messages.length > 0 ? `导入完成：${messages.join('，')}` : '没有可导入的密钥',
       'success'
     );
-  } catch (error: any) {
-    showToast('导入失败: ' + error.message, 'error');
+  } catch (error) {
+    showToast(`导入失败: ${getErrorMessage(error)}`, 'error');
   } finally {
     isImporting.value = false;
   }
@@ -251,8 +349,10 @@ async function performImport() {
 function resetImport() {
   showImportModal.value = false;
   pendingImportData.value = null;
+  isEncryptedBackup.value = false;
   importPassword.value = '';
   importPasswordError.value = '';
+  compatibilityHint.value = '';
 }
 </script>
 
@@ -263,7 +363,6 @@ function resetImport() {
 
   <div class="page-content">
     <div class="backup-sections">
-      <!-- 导出备份 -->
       <section class="backup-section">
         <div class="section-icon export">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -273,14 +372,13 @@ function resetImport() {
           </svg>
         </div>
         <h2>导出备份</h2>
-        <p>将所有密钥导出为 JSON 文件，保存到本地</p>
+        <p>将当前全部密钥导出为 JSON 备份文件。</p>
 
-        <!-- 加密提示 -->
         <div v-if="enableBackupEncryption && !useMasterPasswordForBackup" class="export-password-input">
           <label>备份密码</label>
           <input
-            type="password"
             v-model="exportPassword"
+            type="password"
             class="form-input"
             placeholder="输入备份加密密码"
           >
@@ -296,7 +394,6 @@ function resetImport() {
         </button>
       </section>
 
-      <!-- 导入备份 -->
       <section class="backup-section">
         <div class="section-icon import">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -306,7 +403,7 @@ function resetImport() {
           </svg>
         </div>
         <h2>导入备份</h2>
-        <p>从 JSON 备份文件恢复密钥</p>
+        <p>支持导入旧版备份、未加密备份和加密备份。</p>
         <button class="btn-secondary" :disabled="isReadingFile" @click="triggerImport">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -318,7 +415,6 @@ function resetImport() {
       </section>
     </div>
 
-    <!-- 安全提示 -->
     <div class="backup-warning">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
@@ -327,11 +423,10 @@ function resetImport() {
       </svg>
       <div>
         <strong>安全提示</strong>
-        <p>备份文件包含明文密钥，请妥善保管，不要上传到公共位置！</p>
+        <p>备份文件包含敏感密钥，请妥善保管，不要上传到公共位置。</p>
       </div>
     </div>
 
-    <!-- 导入模态框 -->
     <div v-if="showImportModal" class="modal" @click="resetImport">
       <div class="modal-content" @click.stop>
         <div class="modal-header">
@@ -345,7 +440,6 @@ function resetImport() {
         </div>
 
         <div class="modal-body">
-          <!-- 备份信息 -->
           <div v-if="backupInfo" class="backup-info">
             <div class="backup-info-item">
               <span class="backup-info-label">备份版本</span>
@@ -361,13 +455,15 @@ function resetImport() {
             </div>
           </div>
 
-          <!-- 当前密钥数量 -->
+          <p v-if="compatibilityHint" class="compatibility-hint">
+            {{ compatibilityHint }}
+          </p>
+
           <p class="modal-text">
             检测到备份包含 <strong>{{ backupInfo?.count || 0 }}</strong> 个密钥，
             当前已有 <strong>{{ secretStore.secrets.length }}</strong> 个密钥。
           </p>
 
-          <!-- 解密区域 -->
           <div v-if="isEncryptedBackup" class="decrypt-section">
             <div class="decrypt-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -376,55 +472,62 @@ function resetImport() {
               </svg>
             </div>
             <p class="decrypt-title">此备份已加密</p>
-            <p class="decrypt-desc">请输入备份密码以解密</p>
+            <p class="decrypt-desc">将优先尝试当前主密码或已保存的备份密码；失败时再手动输入。</p>
             <input
-              type="password"
               v-model="importPassword"
+              type="password"
               class="form-input"
-              placeholder="输入备份密码"
+              placeholder="输入备份密码（可留空）"
             >
             <p v-if="importPasswordError" class="form-error">{{ importPasswordError }}</p>
           </div>
 
-          <!-- 导入方式选择 -->
-          <div v-if="!isEncryptedBackup || importPassword" class="import-action">
-            <p class="import-action-label">请选择导入方式：</p>
+          <div class="import-action">
+            <p class="import-action-label">选择导入策略</p>
             <div class="import-action-buttons">
               <button
                 class="import-action-btn"
-                :class="{ active: importAction === 'merge' }"
-                @click="importAction = 'merge'"
+                :class="{ active: importAction === 'skip' }"
+                @click="importAction = 'skip'"
               >
-                <strong>合并</strong>
-                <small>跳过重复，保留现有</small>
+                <strong>跳过重复</strong>
+                <small>保留现有数据，只导入新密钥</small>
               </button>
               <button
                 class="import-action-btn"
                 :class="{ active: importAction === 'overwrite' }"
                 @click="importAction = 'overwrite'"
               >
-                <strong>覆盖</strong>
-                <small>清空现有，全部替换</small>
+                <strong>覆盖重复</strong>
+                <small>匹配到重复项时用备份内容覆盖</small>
+              </button>
+              <button
+                class="import-action-btn"
+                :class="{ active: importAction === 'both' }"
+                @click="importAction = 'both'"
+              >
+                <strong>全部保留</strong>
+                <small>重复项也作为新记录导入</small>
               </button>
             </div>
           </div>
         </div>
 
         <div class="modal-footer">
-          <button class="btn-secondary" @click="resetImport" :disabled="isImporting">取消</button>
+          <button class="btn-secondary" :disabled="isImporting" @click="resetImport">取消</button>
           <button
             v-if="isEncryptedBackup"
             class="btn-primary"
+            :disabled="isImporting"
             @click="decryptAndImport"
-            :disabled="isImporting || !importPassword"
           >
             {{ isImporting ? '导入中...' : '解密并导入' }}
           </button>
           <button
             v-else
             class="btn-primary"
-            @click="performImport"
             :disabled="isImporting"
+            @click="performImport"
           >
             {{ isImporting ? '导入中...' : '确认导入' }}
           </button>
@@ -503,6 +606,7 @@ function resetImport() {
 
 .export-password-input {
   margin-bottom: 16px;
+  text-align: left;
 }
 
 .export-password-input label {
@@ -536,13 +640,9 @@ function resetImport() {
   opacity: 0.9;
 }
 
-/* Modal */
 .modal {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -556,7 +656,7 @@ function resetImport() {
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   width: 90%;
-  max-width: 480px;
+  max-width: 520px;
   max-height: 90vh;
   overflow-y: auto;
 }
@@ -602,6 +702,15 @@ function resetImport() {
   margin-bottom: 16px;
 }
 
+.compatibility-hint {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+  font-size: 13px;
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;
@@ -610,7 +719,6 @@ function resetImport() {
   border-top: 1px solid #e2e8f0;
 }
 
-/* Backup Info */
 .backup-info {
   display: flex;
   gap: 24px;
@@ -637,7 +745,6 @@ function resetImport() {
   color: #1e293b;
 }
 
-/* Decrypt Section */
 .decrypt-section {
   text-align: center;
   padding: 16px;
@@ -655,7 +762,7 @@ function resetImport() {
   background: #4f46e5;
   border-radius: 50%;
   margin-bottom: 12px;
-  color: white;
+  color: #ffffff;
 }
 
 .decrypt-title {
@@ -671,13 +778,8 @@ function resetImport() {
   margin-bottom: 12px;
 }
 
-.decrypt-section .form-input {
-  text-align: center;
-}
-
-/* Import Action */
 .import-action {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .import-action-label {
@@ -688,7 +790,7 @@ function resetImport() {
 
 .import-action-buttons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
@@ -696,7 +798,7 @@ function resetImport() {
   padding: 12px 16px;
   border: 2px solid #e2e8f0;
   border-radius: 8px;
-  background: #fff;
+  background: #ffffff;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -723,7 +825,6 @@ function resetImport() {
   color: #4f46e5;
 }
 
-/* Form Elements */
 .form-input {
   width: 100%;
   padding: 10px 12px;
@@ -745,14 +846,13 @@ function resetImport() {
   margin-top: 8px;
 }
 
-/* Buttons */
 .btn-primary {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 10px 20px;
   background: #4f46e5;
-  color: #fff;
+  color: #ffffff;
   border: none;
   border-radius: 8px;
   font-size: 14px;
@@ -794,5 +894,20 @@ function resetImport() {
 .btn-secondary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .backup-sections {
+    grid-template-columns: 1fr;
+  }
+
+  .import-action-buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .backup-info {
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 </style>

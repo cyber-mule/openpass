@@ -2,7 +2,7 @@
  * 键盘快捷键管理 Composable
  */
 
-import { ref, type Ref } from 'vue';
+import { ref } from 'vue';
 
 interface ShortcutConfig {
   onSearch: () => void;

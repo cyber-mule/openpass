@@ -76,7 +76,7 @@ async function handleSubmit() {
       </CardHeader>
 
       <CardContent>
-        <form @submit.prevent="handleSubmit" class="space-y-4">
+        <form class="space-y-4" @submit.prevent="handleSubmit">
           <div class="space-y-2">
             <Label for="password">主密码</Label>
             <div class="relative">
@@ -93,8 +93,8 @@ async function handleSubmit() {
               <button
                 type="button"
                 class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                @click="showPassword = !showPassword"
                 :disabled="submitting || isLocked"
+                @click="showPassword = !showPassword"
               >
                 <Eye v-if="!showPassword" class="h-5 w-5" />
                 <EyeOff v-else class="h-5 w-5" />

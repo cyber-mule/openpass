@@ -102,13 +102,13 @@ export function matchSecrets(url: string, secrets: Array<{ site: string }>) {
 /**
  * 安全发送消息到扩展
  */
-export async function safeSendMessage(message: any) {
+export async function safeSendMessage<TMessage, TResponse = unknown>(message: TMessage): Promise<TResponse | null> {
   try {
     const response = await chrome.runtime.sendMessage(message);
     if (chrome.runtime.lastError) {
       throw new Error(chrome.runtime.lastError.message);
     }
-    return response;
+    return response as TResponse;
   } catch (error) {
     if ((error as Error).message?.includes('Extension context invalidated')) {
       showToast('扩展已更新，请刷新页面', 'warning');

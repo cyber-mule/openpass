@@ -3,6 +3,17 @@ import { ref } from 'vue';
 import { useAuthStore } from './auth';
 import CryptoUtils from '@/utils/crypto';
 import { showToast } from '@/utils/ui';
+import {
+  buildSecretIdentity,
+  checkBackupCompatibility,
+  createBackupData,
+  decryptBackupData,
+  getBackupEncryptionSettings,
+  migrateBackupData,
+  resolveStoredBackupPassword,
+  triggerChangeBackup,
+  validateBackupData
+} from '@/utils/backup';
 
 export interface Secret {
   id: string;
@@ -14,6 +25,7 @@ export interface Secret {
   algorithm?: string;
   createdAt?: string;
   updatedAt?: string;
+  importedAt?: string;
 }
 
 export const useSecretStore = defineStore('secrets', () => {
@@ -23,11 +35,15 @@ export const useSecretStore = defineStore('secrets', () => {
 
   async function loadSecrets() {
     loading.value = true;
+
     try {
       const authStore = useAuthStore();
-      const result = await chrome.storage.local.get(['encryptedSecrets', 'secrets']);
+      const result = await chrome.storage.local.get<{
+        encryptedSecrets?: string;
+        secrets?: Secret[];
+      }>(['encryptedSecrets', 'secrets']);
 
-      if (result.encryptedSecrets && authStore.sessionKey) {
+      if (typeof result.encryptedSecrets === 'string' && authStore.sessionKey) {
         const decrypted = await CryptoUtils.decrypt(result.encryptedSecrets, authStore.sessionKey);
         const parsed = JSON.parse(decrypted);
         secrets.value = Array.isArray(parsed) ? parsed : [];
@@ -35,6 +51,14 @@ export const useSecretStore = defineStore('secrets', () => {
         secrets.value = result.secrets;
       } else {
         secrets.value = [];
+      }
+
+      if (!Array.isArray(result.secrets) && secrets.value.length > 0) {
+        console.warn('[SecretStore] storage 中 secrets 格式异常，正在修复...');
+        await chrome.storage.local.set({
+          secrets: secrets.value,
+          sitesList: secrets.value.map((secret) => ({ site: secret.site }))
+        });
       }
     } catch (error) {
       console.error('加载密钥失败:', error);
@@ -45,27 +69,40 @@ export const useSecretStore = defineStore('secrets', () => {
     }
   }
 
-  async function saveSecrets() {
+  async function saveSecrets(options: { triggerSnapshot?: boolean } = {}) {
     const authStore = useAuthStore();
-    const sitesList = secrets.value.map(s => ({ site: s.site }));
 
-    // v0.1.0 设计: popup 无需认证，数据明文存储
-    // 始终保存明文版本供 popup 使用
-    const data: Record<string, any> = {
+    if (!Array.isArray(secrets.value)) {
+      console.error('[SecretStore] secrets 不是数组，强制修复');
+      secrets.value = [];
+    }
+
+    const sitesList = secrets.value.map((secret) => ({ site: secret.site }));
+    const data: {
+      secrets: Secret[];
+      sitesList: Array<{ site: string }>;
+      encryptedSecrets?: string;
+    } = {
       secrets: secrets.value,
       sitesList
     };
 
-    // 如果有 sessionKey，额外保存加密版本
     if (authStore.sessionKey) {
-      const encrypted = await CryptoUtils.encrypt(
+      data.encryptedSecrets = await CryptoUtils.encrypt(
         JSON.stringify(secrets.value),
         authStore.sessionKey
       );
-      data.encryptedSecrets = encrypted;
     }
 
     await chrome.storage.local.set(data);
+
+    if (options.triggerSnapshot) {
+      const encryptionSettings = await getBackupEncryptionSettings();
+      const password = await resolveStoredBackupPassword(authStore.sessionKey, encryptionSettings);
+      void triggerChangeBackup(secrets.value, password).catch((error) => {
+        console.error('触发本地快照失败:', error);
+      });
+    }
   }
 
   async function addSecret(secretData: Omit<Secret, 'id' | 'createdAt' | 'updatedAt'>) {
@@ -75,115 +112,129 @@ export const useSecretStore = defineStore('secrets', () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
     secrets.value.push(newSecret);
-    await saveSecrets();
+    await saveSecrets({ triggerSnapshot: true });
     showToast('密钥已添加', 'success');
     return newSecret;
   }
 
   async function updateSecret(id: string, updates: Partial<Secret>) {
-    const index = secrets.value.findIndex(s => s.id === id);
-    if (index === -1) return;
+    const index = secrets.value.findIndex((secret) => secret.id === id);
+    if (index === -1) {
+      return;
+    }
 
     secrets.value[index] = {
       ...secrets.value[index],
       ...updates,
       updatedAt: new Date().toISOString()
     };
-    await saveSecrets();
+
+    await saveSecrets({ triggerSnapshot: true });
     showToast('密钥已更新', 'success');
   }
 
   async function deleteSecret(id: string) {
-    secrets.value = secrets.value.filter(s => s.id !== id);
-    await saveSecrets();
+    secrets.value = secrets.value.filter((secret) => secret.id !== id);
+    await saveSecrets({ triggerSnapshot: true });
     showToast('密钥已删除', 'success');
   }
 
   function getFilteredSecrets() {
-    if (!searchQuery.value) return secrets.value;
+    if (!searchQuery.value) {
+      return secrets.value;
+    }
+
     const query = searchQuery.value.toLowerCase();
-    return secrets.value.filter(s =>
-      s.site.toLowerCase().includes(query) ||
-      s.name?.toLowerCase().includes(query) ||
-      s.secret.toLowerCase().includes(query)
+    return secrets.value.filter((secret) =>
+      secret.site.toLowerCase().includes(query) ||
+      secret.name?.toLowerCase().includes(query) ||
+      secret.secret.toLowerCase().includes(query)
     );
   }
 
   function searchSecrets(query: string) {
-    if (!query) return secrets.value;
+    if (!query) {
+      return secrets.value;
+    }
+
     const lowerQuery = query.toLowerCase();
-    return secrets.value.filter(s =>
-      s.site.toLowerCase().includes(lowerQuery) ||
-      s.name?.toLowerCase().includes(lowerQuery) ||
-      s.secret.toLowerCase().includes(lowerQuery)
+    return secrets.value.filter((secret) =>
+      secret.site.toLowerCase().includes(lowerQuery) ||
+      secret.name?.toLowerCase().includes(lowerQuery) ||
+      secret.secret.toLowerCase().includes(lowerQuery)
     );
   }
 
   function getSecretById(id: string) {
-    return secrets.value.find(s => s.id === id);
+    return secrets.value.find((secret) => secret.id === id);
   }
 
   async function exportSecrets(password?: string): Promise<Blob> {
-    const data = {
-      format: 'openpass-backup',
-      formatVersion: 1,
-      appVersion: chrome.runtime.getManifest().version,
-      exportTime: new Date().toISOString(),
-      count: secrets.value.length,
-      encrypted: !!password,
-      secrets: password ? undefined : secrets.value
-    };
-
-    if (password) {
-      data.encryptedData = await CryptoUtils.encrypt(
-        JSON.stringify(secrets.value),
-        password
-      );
-    }
-
+    const data = await createBackupData(secrets.value, password);
     const json = JSON.stringify(data, null, 2);
     return new Blob([json], { type: 'application/json' });
   }
 
   async function importSecrets(file: File, password?: string): Promise<number> {
     const text = await file.text();
-    const data = JSON.parse(text);
+    const parsed = JSON.parse(text);
+    const validation = validateBackupData<Secret>(parsed);
 
-    let importedSecrets: Secret[];
-
-    if (data.encrypted && data.encryptedData && password) {
-      const decrypted = await CryptoUtils.decrypt(data.encryptedData, password);
-      const parsed = JSON.parse(decrypted);
-      if (!Array.isArray(parsed)) {
-        throw new Error('解密数据格式无效');
-      }
-      importedSecrets = parsed;
-    } else if (Array.isArray(data.secrets)) {
-      importedSecrets = data.secrets;
-    } else if (Array.isArray(data)) {
-      importedSecrets = data;
-    } else {
-      throw new Error('无效的备份文件格式');
+    if (!validation.valid || !validation.data) {
+      throw new Error(validation.error || '无效的备份文件格式');
     }
 
-    // 合并密钥（去重）
-    const existingIds = new Set(secrets.value.map(s => s.id));
+    let backupData = validation.data;
+
+    if (validation.encrypted) {
+      if (!password) {
+        throw new Error('请输入备份解密密码');
+      }
+
+      const decryptedSecrets = await decryptBackupData(backupData, password);
+      backupData = {
+        ...backupData,
+        encrypted: false,
+        encryptedData: undefined,
+        secrets: decryptedSecrets,
+        count: decryptedSecrets.length
+      };
+    }
+
+    const compatibility = checkBackupCompatibility(backupData.appVersion || '0.0.0');
+    if (!compatibility.compatible) {
+      throw new Error(compatibility.message);
+    }
+
+    if (compatibility.level === 'warning') {
+      backupData = migrateBackupData(backupData);
+    }
+
+    const importedSecrets = Array.isArray(backupData.secrets) ? backupData.secrets : [];
+    const existingSecrets = new Set(secrets.value.map(buildSecretIdentity));
     let count = 0;
 
     for (const secret of importedSecrets) {
-      if (!secret.id) {
-        secret.id = crypto.randomUUID();
-      }
-      if (!existingIds.has(secret.id)) {
-        secrets.value.push(secret);
-        existingIds.add(secret.id);
-        count++;
+      const normalizedSecret: Secret = {
+        ...secret,
+        id: secret.id || crypto.randomUUID(),
+        secret: String(secret.secret || '').trim().toUpperCase().replace(/\s/g, ''),
+        site: String(secret.site || '').trim().toLowerCase(),
+        digits: typeof secret.digits === 'number' ? secret.digits : 6
+      };
+
+      const secretIdentity = buildSecretIdentity(normalizedSecret);
+      if (!existingSecrets.has(secretIdentity)) {
+        secrets.value.push(normalizedSecret);
+        existingSecrets.add(secretIdentity);
+        count += 1;
       }
     }
 
     if (count > 0) {
-      await saveSecrets();
+      await saveSecrets({ triggerSnapshot: true });
     }
 
     return count;

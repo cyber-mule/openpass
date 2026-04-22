@@ -4,6 +4,22 @@
  */
 
 class CryptoUtils {
+  static toArrayBuffer(buffer: ArrayBufferLike): ArrayBuffer {
+    if (buffer instanceof ArrayBuffer) {
+      return buffer;
+    }
+
+    return Uint8Array.from(new Uint8Array(buffer)).buffer;
+  }
+
+  static normalizeBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+    const normalizedBuffer = this
+      .toArrayBuffer(bytes.buffer)
+      .slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+
+    return new Uint8Array(normalizedBuffer);
+  }
+
   /**
    * 从密码派生密钥
    * 使用 PBKDF2 算法
@@ -11,6 +27,7 @@ class CryptoUtils {
   static async deriveKey(password: string, salt: Uint8Array) {
     const encoder = new TextEncoder();
     const passwordBuffer = encoder.encode(password);
+    const normalizedSalt = this.normalizeBytes(salt);
 
     const baseKey = await crypto.subtle.importKey(
       'raw',
@@ -23,7 +40,7 @@ class CryptoUtils {
     return crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
-        salt: salt,
+        salt: normalizedSalt,
         iterations: 100000,
         hash: 'SHA-256'
       },
@@ -87,7 +104,7 @@ class CryptoUtils {
    */
   static async hashPassword(password: string, salt: Uint8Array) {
     const encoder = new TextEncoder();
-    const data = encoder.encode(password + this.arrayBufferToBase64(salt.buffer));
+    const data = encoder.encode(password + this.arrayBufferToBase64(this.toArrayBuffer(salt.buffer)));
 
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     return this.arrayBufferToBase64(hashBuffer);
@@ -127,8 +144,8 @@ class CryptoUtils {
   /**
    * ArrayBuffer 转 Base64
    */
-  static arrayBufferToBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer);
+  static arrayBufferToBase64(buffer: ArrayBufferLike): string {
+    const bytes = new Uint8Array(this.toArrayBuffer(buffer));
     let binary = '';
     for (let i = 0; i < bytes.byteLength; i++) {
       binary += String.fromCharCode(bytes[i]);
@@ -145,7 +162,7 @@ class CryptoUtils {
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    return bytes.buffer;
+    return this.toArrayBuffer(bytes.buffer);
   }
 }
 

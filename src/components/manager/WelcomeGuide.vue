@@ -40,7 +40,12 @@ onMounted(async () => {
 });
 
 async function checkGuideStatus() {
-  const result = await chrome.storage.local.get([
+  const result = await chrome.storage.local.get<{
+    masterPasswordHash?: string;
+    secrets?: unknown[];
+    enableAutoBackup?: boolean;
+    welcomeCompleted?: boolean;
+  }>([
     'masterPasswordHash',
     'secrets',
     'enableAutoBackup',
@@ -48,7 +53,7 @@ async function checkGuideStatus() {
   ]);
 
   steps.step1.completed = !!result.masterPasswordHash;
-  steps.step2.completed = result.secrets && result.secrets.length > 0;
+  steps.step2.completed = Array.isArray(result.secrets) && result.secrets.length > 0;
   steps.step3.completed = !!result.enableAutoBackup;
 
   if (!steps.step1.completed) {
@@ -96,7 +101,7 @@ async function handleSetPassword() {
     welcomePasswordError.value = '';
 
     showToast('主密码设置成功', 'success');
-  } catch (error) {
+  } catch {
     welcomePasswordError.value = '设置失败，请重试';
   } finally {
     passwordSubmitting.value = false;
@@ -146,18 +151,21 @@ function toggleStep(step: 'step1' | 'step2' | 'step3') {
               @click="toggleStep('step1')"
             >
               <div class="flex items-center gap-3">
-                <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                <div
+class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
                      :class="steps.step1.completed ? 'bg-green-500 text-white' : 'bg-primary text-primary-foreground'">
                   <Check v-if="steps.step1.completed" class="h-3 w-3" />
                   <span v-else>1</span>
                 </div>
                 <span class="font-medium">设置主密码</span>
-                <span class="text-xs px-2 py-0.5 rounded"
+                <span
+class="text-xs px-2 py-0.5 rounded"
                       :class="steps.step1.completed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
                   {{ steps.step1.completed ? '已完成' : '必填' }}
                 </span>
               </div>
-              <ChevronDown class="h-5 w-5 text-muted-foreground transition-transform"
+              <ChevronDown
+class="h-5 w-5 text-muted-foreground transition-transform"
                           :class="{ 'rotate-180': expandedStep === 'step1' && !steps.step1.completed }" />
             </button>
 
@@ -190,14 +198,16 @@ function toggleStep(step: 'step1' | 'step2' | 'step3') {
           </div>
 
           <!-- Step 2 -->
-          <div class="border rounded-lg transition-all"
+          <div
+class="border rounded-lg transition-all"
                :class="expandedStep === 'step2' && !steps.step2.completed ? 'border-primary bg-primary/5' : 'border-border'">
             <button
               class="w-full px-4 py-3 flex items-center justify-between text-left"
               @click="toggleStep('step2')"
             >
               <div class="flex items-center gap-3">
-                <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                <div
+class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
                      :class="steps.step2.completed ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'">
                   <Check v-if="steps.step2.completed" class="h-3 w-3" />
                   <span v-else>2</span>
@@ -205,25 +215,28 @@ function toggleStep(step: 'step1' | 'step2' | 'step3') {
                 <span class="font-medium">添加第一个密钥</span>
                 <span class="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">推荐</span>
               </div>
-              <ChevronDown class="h-5 w-5 text-muted-foreground transition-transform"
+              <ChevronDown
+class="h-5 w-5 text-muted-foreground transition-transform"
                           :class="{ 'rotate-180': expandedStep === 'step2' && !steps.step2.completed }" />
             </button>
 
             <div v-if="expandedStep === 'step2' && !steps.step2.completed" class="px-4 pb-4 border-t pt-4">
               <p class="text-sm text-muted-foreground mb-3">从支持 2FA 的网站获取密钥后，点击添加</p>
-              <Button variant="secondary" class="w-full" @click="emit('close')">去添加密钥</Button>
+              <Button variant="secondary" class="w-full" @click="emit('navigate', 'secrets:add')">去添加密钥</Button>
             </div>
           </div>
 
           <!-- Step 3 -->
-          <div class="border rounded-lg transition-all"
+          <div
+class="border rounded-lg transition-all"
                :class="expandedStep === 'step3' && !steps.step3.completed ? 'border-primary bg-primary/5' : 'border-border'">
             <button
               class="w-full px-4 py-3 flex items-center justify-between text-left"
               @click="toggleStep('step3')"
             >
               <div class="flex items-center gap-3">
-                <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                <div
+class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
                      :class="steps.step3.completed ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'">
                   <Check v-if="steps.step3.completed" class="h-3 w-3" />
                   <span v-else>3</span>
@@ -231,7 +244,8 @@ function toggleStep(step: 'step1' | 'step2' | 'step3') {
                 <span class="font-medium">配置自动备份</span>
                 <span class="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">推荐</span>
               </div>
-              <ChevronDown class="h-5 w-5 text-muted-foreground transition-transform"
+              <ChevronDown
+class="h-5 w-5 text-muted-foreground transition-transform"
                           :class="{ 'rotate-180': expandedStep === 'step3' && !steps.step3.completed }" />
             </button>
 

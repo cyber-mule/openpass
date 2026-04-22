@@ -1,6 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import TOTP from '@/utils/totp';
+import CryptoUtils from '@/utils/crypto';
 
 interface Secret {
   id: string;
@@ -9,27 +10,35 @@ interface Secret {
   name?: string;
   digits?: number;
   createdAt?: string;
+  updatedAt?: string;
+  importedAt?: string;
 }
+
+interface PendingSecret {
+  secret: string;
+  site: string;
+  name: string;
+}
+
+type TimerHandle = ReturnType<typeof setInterval>;
+type TimeoutHandle = ReturnType<typeof setTimeout>;
 
 // 状态
 const secrets = ref<Secret[]>([]);
 const searchQuery = ref('');
 const currentPage = ref('home');
 const currentUrl = ref('');
-const pendingSecret = ref<{ secret: string; site: string; name: string } | null>(null);
+const pendingSecret = ref<PendingSecret | null>(null);
 const editingSecret = ref<Secret | null>(null);
 const showMenu = ref(false);
-const showRestoreModal = ref(false);
 const showAboutModal = ref(false);
-const pendingImportData = ref<any>(null);
-const isEncryptedImport = ref(false);
-const importPassword = ref('');
-const importPasswordError = ref('');
+const showRepairModal = ref(false); // 修复数据模态框
+const repairError = ref('');
 
 // 验证码数据
 const codeData = ref<Map<string, { code: string; remainingSeconds: number }>>(new Map());
-const timers = ref<Map<string, number>>(new Map());
-const previewTimer = ref<number | null>(null);
+const timers = ref<Map<string, TimerHandle>>(new Map());
+const previewTimer = ref<TimerHandle | null>(null);
 const previewCode = ref('');
 const previewRemaining = ref(0);
 
@@ -50,20 +59,58 @@ const isSetupComplete = ref(false);
 const toastMessage = ref('');
 const toastVisible = ref(false);
 const toastSuccess = ref(false);
+let expectedSecretsSignature: string | null = null;
+let expectedSecretsSignatureTimer: TimeoutHandle | null = null;
 
 onMounted(async () => {
   const manifest = chrome.runtime.getManifest();
   version.value = manifest.version;
 
-  // 检查设置是否完成
-  const result = await chrome.storage.local.get(['isSetupComplete', 'secrets', 'pendingSecret']);
+  // 检查设置是否完成，并读取所有相关数据
+  const result = await chrome.storage.local.get<{
+    isSetupComplete?: boolean;
+    secrets?: Secret[];
+    encryptedSecrets?: string;
+    pendingSecret?: PendingSecret;
+  }>(['isSetupComplete', 'secrets', 'encryptedSecrets', 'pendingSecret']);
   isSetupComplete.value = result.isSetupComplete === true;
 
   if (!isSetupComplete.value) {
     return;
   }
 
-  secrets.value = Array.isArray(result.secrets) ? result.secrets : [];
+  const sessionKey = await getActiveSessionKey();
+
+  // popup 优先读取明文 secrets，并在有会话时同步加密副本
+  if (Array.isArray(result.secrets) && (result.secrets.length > 0 || !result.encryptedSecrets)) {
+    secrets.value = normalizeSecrets(result.secrets);
+    repairError.value = '';
+
+    if (sessionKey) {
+      await persistSecrets(result.secrets, sessionKey);
+    } else if (result.encryptedSecrets) {
+      await chrome.storage.local.remove(['encryptedSecrets']);
+    }
+  } else if (result.encryptedSecrets) {
+    if (sessionKey) {
+      try {
+        secrets.value = await restoreSecretsFromEncrypted(result.encryptedSecrets, sessionKey);
+        repairError.value = '';
+      } catch (error) {
+        console.warn('[Popup] 无法用当前会话自动同步加密数据', error);
+        secrets.value = [];
+        repairError.value = '检测到加密数据，但当前会话无法自动同步。请打开管理后台重新验证主密码后继续。';
+        showRepairModal.value = true;
+      }
+    } else {
+      console.warn('[Popup] 仅检测到加密数据，等待管理后台同步');
+      secrets.value = [];
+      repairError.value = '检测到当前只有加密数据。请打开管理后台完成解锁后，popup 会自动同步。';
+      showRepairModal.value = true;
+    }
+  } else {
+    secrets.value = [];
+  }
 
   // 获取当前标签页
   try {
@@ -71,16 +118,21 @@ onMounted(async () => {
     if (tab?.url) {
       currentUrl.value = tab.url;
     }
-  } catch {}
+  } catch {
+    currentUrl.value = '';
+  }
+
 
   // 检查待添加密钥
   if (result.pendingSecret) {
-    pendingSecret.value = result.pendingSecret;
+    const nextPendingSecret = result.pendingSecret;
+    pendingSecret.value = nextPendingSecret;
     await chrome.storage.local.remove(['pendingSecret']);
     // 预填充创建表单
-    createForm.value.secret = pendingSecret.value.secret;
-    createForm.value.site = pendingSecret.value.site;
-    createForm.value.name = pendingSecret.value.name;
+    resetCreateForm(nextPendingSecret.site || getDefaultSite());
+    createForm.value.secret = nextPendingSecret.secret;
+    createForm.value.site = nextPendingSecret.site;
+    createForm.value.name = nextPendingSecret.name;
     currentPage.value = 'create';
   }
 
@@ -89,19 +141,63 @@ onMounted(async () => {
 
   // 监听 storage 变化，同步密钥数据
   chrome.storage.onChanged.addListener(storageChangeListener);
+
+  // 全局点击事件：关闭下拉菜单
+  document.addEventListener('click', handleGlobalClick);
 });
 
 onUnmounted(() => {
   clearAllTimers();
+  clearExpectedSecretsSync();
   chrome.storage.onChanged.removeListener(storageChangeListener);
+  document.removeEventListener('click', handleGlobalClick);
 });
 
-function storageChangeListener(changes: any) {
+// 全局点击处理：关闭下拉菜单
+function handleGlobalClick(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest('.dropdown')) {
+    showMenu.value = false;
+  }
+}
+
+function storageChangeListener(changes: Record<string, chrome.storage.StorageChange>) {
   if (changes.secrets) {
     const newValue = changes.secrets.newValue;
-    secrets.value = Array.isArray(newValue) ? newValue : [];
-    clearAllTimers();
-    startCodeUpdater();
+    if (!Array.isArray(newValue)) {
+      console.warn('[Popup] 忽略异常的 secrets 变更', newValue);
+      return;
+    }
+
+    const normalizedSecrets = normalizeSecrets(newValue);
+    const nextSignature = getSecretsSignature(normalizedSecrets);
+    const currentSignature = getSecretsSignature(secrets.value);
+
+    if (
+      expectedSecretsSignature &&
+      normalizedSecrets.length === 0 &&
+      currentSignature !== nextSignature
+    ) {
+      console.warn('[Popup] 忽略保存过程中的瞬时空 secrets 同步');
+      return;
+    }
+
+    if (currentSignature === nextSignature) {
+      if (expectedSecretsSignature === nextSignature) {
+        clearExpectedSecretsSync();
+      }
+      showRepairModal.value = false;
+      repairError.value = '';
+      return;
+    }
+
+    secrets.value = normalizedSecrets;
+    showRepairModal.value = false;
+    repairError.value = '';
+    if (expectedSecretsSignature === nextSignature) {
+      clearExpectedSecretsSync();
+    }
+    restartCodeUpdater();
   }
 }
 
@@ -113,6 +209,137 @@ function showToast(message: string, success = false) {
   setTimeout(() => {
     toastVisible.value = false;
   }, 2000);
+}
+
+function stopPreviewTimer() {
+  if (previewTimer.value) {
+    clearInterval(previewTimer.value);
+    previewTimer.value = null;
+  }
+}
+
+async function getActiveSessionKey() {
+  const [localResult, sessionResult] = await Promise.all([
+    chrome.storage.local.get<{ sessionExpiresAt?: number }>(['sessionExpiresAt']),
+    chrome.storage.session.get<{ sessionKey?: string }>(['sessionKey'])
+  ]);
+
+  if (
+    typeof localResult.sessionExpiresAt === 'number' &&
+    Date.now() > localResult.sessionExpiresAt
+  ) {
+    await chrome.storage.session.remove(['sessionKey']);
+    await chrome.storage.local.remove(['sessionExpiresAt']);
+    return null;
+  }
+
+  return typeof sessionResult.sessionKey === 'string' ? sessionResult.sessionKey : null;
+}
+
+function buildSitesList(nextSecrets: Secret[]) {
+  return nextSecrets.map((secret) => ({ site: secret.site }));
+}
+
+function normalizeSecrets(nextSecrets: Secret[]) {
+  return nextSecrets.map((secret) => ({
+    ...secret
+  }));
+}
+
+function getSecretsSignature(nextSecrets: Secret[]) {
+  return JSON.stringify(normalizeSecrets(nextSecrets));
+}
+
+function rememberExpectedSecretsSync(nextSecrets: Secret[]) {
+  expectedSecretsSignature = getSecretsSignature(nextSecrets);
+  if (expectedSecretsSignatureTimer) {
+    clearTimeout(expectedSecretsSignatureTimer);
+  }
+
+  expectedSecretsSignatureTimer = setTimeout(() => {
+    clearExpectedSecretsSync();
+  }, 3000);
+}
+
+function clearExpectedSecretsSync() {
+  expectedSecretsSignature = null;
+  if (expectedSecretsSignatureTimer) {
+    clearTimeout(expectedSecretsSignatureTimer);
+    expectedSecretsSignatureTimer = null;
+  }
+}
+
+async function persistSecrets(nextSecrets: Secret[], sessionKey?: string | null) {
+  const normalizedSecrets = normalizeSecrets(nextSecrets);
+  const activeSessionKey = sessionKey === undefined ? await getActiveSessionKey() : sessionKey;
+  const sitesList = buildSitesList(normalizedSecrets);
+  rememberExpectedSecretsSync(normalizedSecrets);
+
+  if (activeSessionKey) {
+    const encryptedSecrets = await CryptoUtils.encrypt(
+      JSON.stringify(normalizedSecrets),
+      activeSessionKey
+    );
+    await chrome.storage.local.set({
+      secrets: normalizedSecrets,
+      sitesList,
+      encryptedSecrets
+    });
+    return;
+  }
+
+  await chrome.storage.local.set({
+    secrets: normalizedSecrets,
+    sitesList
+  });
+  await chrome.storage.local.remove(['encryptedSecrets']);
+}
+
+async function restoreSecretsFromEncrypted(encryptedSecrets: string, sessionKey: string) {
+  const decrypted = await CryptoUtils.decrypt(encryptedSecrets, sessionKey);
+  const parsed = JSON.parse(decrypted);
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('解密后的数据格式无效');
+  }
+
+  await persistSecrets(parsed, sessionKey);
+  return normalizeSecrets(parsed as Secret[]);
+}
+
+function getDefaultSite() {
+  const urlInfo = currentUrl.value ? parseUrl(currentUrl.value) : null;
+  return urlInfo?.fullUrl ?? '';
+}
+
+function resetCreateForm(defaultSite = getDefaultSite()) {
+  createForm.value = {
+    secret: '',
+    site: defaultSite,
+    name: '',
+    digits: 6
+  };
+  previewCode.value = '';
+  previewRemaining.value = 0;
+  stopPreviewTimer();
+}
+
+function restartCodeUpdater() {
+  clearAllTimers();
+  startCodeUpdater();
+}
+
+function showHomePage() {
+  editingSecret.value = null;
+  currentPage.value = 'home';
+  stopPreviewTimer();
+  restartCodeUpdater();
+}
+
+function openCreatePage() {
+  pendingSecret.value = null;
+  resetCreateForm();
+  currentPage.value = 'create';
 }
 
 // 计时器
@@ -129,12 +356,19 @@ function startCardTimer(secret: Secret) {
   timers.value.set(secret.id, timerId);
 }
 
-async function updateSecretCode(secret: Secret) {
+async function refreshSecretCode(secret: Secret) {
   try {
     const result = await TOTP.generateCode(secret.secret, secret.digits || 6);
     codeData.value.set(secret.id, result);
-  } catch {}
+  } catch {
+    codeData.value.delete(secret.id);
+  }
 }
+
+async function updateSecretCode(secret: Secret) {
+  return refreshSecretCode(secret);
+}
+
 
 function clearAllTimers() {
   timers.value.forEach(timer => clearInterval(timer));
@@ -153,7 +387,13 @@ function parseUrl(url: string) {
     const parts = hostname.split('.');
     let mainDomain = hostname;
     if (parts.length >= 2) {
-      mainDomain = parts.slice(-2).join('.');
+      const tldPatterns = ['co.uk', 'com.au', 'co.jp', 'com.cn'];
+      const lastTwo = parts.slice(-2).join('.');
+      if (tldPatterns.includes(lastTwo)) {
+        mainDomain = parts.slice(-3).join('.');
+      } else {
+        mainDomain = parts.slice(-2).join('.');
+      }
     }
     return {
       fullUrl: urlObj.href,
@@ -172,13 +412,38 @@ const currentSiteMatches = computed(() => {
   const urlInfo = parseUrl(currentUrl.value);
   if (!urlInfo) return [];
 
-  return secrets.value.filter(secret => {
-    const site = secret.site.toLowerCase();
-    const fullDomain = urlInfo.fullDomain.toLowerCase();
-    const mainDomain = urlInfo.mainDomain.toLowerCase();
-    return fullDomain.includes(site) || site.includes(fullDomain) ||
-           mainDomain.includes(site) || site.includes(mainDomain);
-  });
+  return secrets.value
+    .map(secret => {
+      const site = secret.site.toLowerCase();
+      const fullUrl = urlInfo.fullUrl.toLowerCase();
+      const origin = urlInfo.origin.toLowerCase();
+      const fullDomain = urlInfo.fullDomain.toLowerCase();
+      const mainDomain = urlInfo.mainDomain.toLowerCase();
+
+      let priority = Number.MAX_SAFE_INTEGER;
+
+      if (fullUrl === site || fullUrl.startsWith(site)) {
+        priority = 1;
+      } else if (origin === site) {
+        priority = 2;
+      } else if (fullDomain === site) {
+        priority = 3;
+      } else if (mainDomain === site) {
+        priority = 4;
+      } else if (
+        fullDomain.includes(site) ||
+        site.includes(fullDomain) ||
+        mainDomain.includes(site) ||
+        site.includes(mainDomain)
+      ) {
+        priority = 5;
+      }
+
+      return { secret, priority };
+    })
+    .filter(item => item.priority !== Number.MAX_SAFE_INTEGER)
+    .sort((a, b) => a.priority - b.priority)
+    .map(item => item.secret);
 });
 
 // 搜索结果
@@ -201,6 +466,26 @@ function formatCode(code: string): string {
   return code;
 }
 
+function getCode(secretId: string): string {
+  return formatCode(codeData.value.get(secretId)?.code || '------');
+}
+
+function getRemainingSeconds(secretId: string): number {
+  return codeData.value.get(secretId)?.remainingSeconds || 30;
+}
+
+function getTimerProgress(secretId: string): string {
+  return `${(getRemainingSeconds(secretId) / 30) * 100}%`;
+}
+
+function isWarning(secretId: string): boolean {
+  return getRemainingSeconds(secretId) <= 10;
+}
+
+function isDanger(secretId: string): boolean {
+  return getRemainingSeconds(secretId) <= 5;
+}
+
 // 复制
 async function copyCode(secret: Secret) {
   const data = codeData.value.get(secret.id);
@@ -213,11 +498,7 @@ async function copyCode(secret: Secret) {
 // 保存密钥
 async function saveSecrets() {
   if (!Array.isArray(secrets.value)) return;
-  const sitesList = secrets.value.map(s => ({ site: s.site }));
-  await chrome.storage.local.set({
-    secrets: secrets.value,
-    sitesList
-  });
+  await persistSecrets(secrets.value);
 }
 
 // 创建密钥
@@ -251,13 +532,11 @@ async function createSecret() {
   showToast('密钥已保存', true);
 
   // 重置表单
-  createForm.value = { secret: '', site: '', name: '', digits: 6 };
-  createError.value = '';
-  currentPage.value = 'home';
+  resetCreateForm();
+  showHomePage();
   pendingSecret.value = null;
 
-  // 启动计时器
-  startCardTimer(newSecret);
+  // 返回首页时会重启卡片刷新
 }
 
 // 更新预览
@@ -265,10 +544,7 @@ async function updatePreview() {
   const secret = createForm.value.secret.trim().toUpperCase().replace(/\s/g, '');
   if (!secret) {
     previewCode.value = '';
-    if (previewTimer.value) {
-      clearInterval(previewTimer.value);
-      previewTimer.value = null;
-    }
+    stopPreviewTimer();
     return;
   }
 
@@ -277,13 +553,15 @@ async function updatePreview() {
     previewCode.value = formatCode(result.code);
     previewRemaining.value = result.remainingSeconds;
 
-    if (previewTimer.value) clearInterval(previewTimer.value);
+    stopPreviewTimer();
     previewTimer.value = setInterval(async () => {
       try {
         const r = await TOTP.generateCode(secret, createForm.value.digits);
         previewCode.value = formatCode(r.code);
         previewRemaining.value = r.remainingSeconds;
-      } catch {}
+      } catch {
+        previewCode.value = '';
+      }
     }, 1000);
   } catch {
     previewCode.value = '';
@@ -333,9 +611,7 @@ async function updateSecret() {
     };
     await saveSecrets();
     showToast('密钥已更新', true);
-    currentPage.value = 'home';
-    editingSecret.value = null;
-    startCardTimer(secrets.value[index]);
+    showHomePage();
   }
 }
 
@@ -347,186 +623,30 @@ async function deleteSecret() {
     secrets.value = Array.isArray(secrets.value) ? secrets.value.filter(s => s.id !== id) : [];
     await saveSecrets();
     showToast('密钥已删除');
-    currentPage.value = 'home';
-    editingSecret.value = null;
+    showHomePage();
   }
 }
 
-// 导出
-async function exportSecrets() {
-  showMenu.value = false;
-  if (!Array.isArray(secrets.value) || secrets.value.length === 0) {
-    showToast('没有可导出的密钥');
+async function deleteSecretFromList(secret: Secret) {
+  const name = secret.name || secret.site;
+  if (!confirm(`确定要删除 "${name}" 吗？`)) {
     return;
   }
 
-  const backupData = {
-    format: 'openpass-backup',
-    formatVersion: 1,
-    appVersion: version.value,
-    exportTime: new Date().toISOString(),
-    count: secrets.value.length,
-    secrets: secrets.value
-  };
-
-  const json = JSON.stringify(backupData, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-
-  const timestamp = new Date().toISOString().split('T')[0];
-  const filename = `openpass-backup-${timestamp}.json`;
-
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-
-  showToast(`已导出 ${secrets.value.length} 个密钥`, true);
-}
-
-// 导入
-function triggerImport() {
-  showMenu.value = false;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.json';
-  input.onchange = handleFileSelect;
-  input.click();
-}
-
-async function handleFileSelect(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-
-    if (data.format === 'openpass-backup') {
-      if (data.encrypted && data.encryptedData) {
-        pendingImportData.value = data;
-        isEncryptedImport.value = true;
-        showRestoreModal.value = true;
-      } else if (Array.isArray(data.secrets)) {
-        pendingImportData.value = data;
-        isEncryptedImport.value = false;
-        showRestoreModal.value = true;
-      }
-    } else if (Array.isArray(data)) {
-      pendingImportData.value = { secrets: data, count: data.length };
-      isEncryptedImport.value = false;
-      showRestoreModal.value = true;
-    } else if (Array.isArray(data.secrets)) {
-      pendingImportData.value = data;
-      isEncryptedImport.value = false;
-      showRestoreModal.value = true;
-    } else {
-      showToast('无法识别的备份格式');
-    }
-  } catch {
-    showToast('读取文件失败');
-  }
-}
-
-// 解密加密备份
-async function decryptImportBackup() {
-  if (!importPassword.value) {
-    importPasswordError.value = '请输入解密密码';
-    return false;
-  }
-
-  try {
-    const { default: CryptoUtils } = await import('@/utils/crypto');
-    const decrypted = await CryptoUtils.decrypt(
-      pendingImportData.value.encryptedData,
-      importPassword.value
-    );
-    const parsed = JSON.parse(decrypted);
-    if (!Array.isArray(parsed)) {
-      importPasswordError.value = '解密数据格式无效';
-      return false;
-    }
-    pendingImportData.value.secrets = parsed;
-    isEncryptedImport.value = false;
-    return true;
-  } catch {
-    importPasswordError.value = '解密失败，请检查密码是否正确';
-    return false;
-  }
-}
-
-async function mergeImport() {
-  // 如果是加密备份，先解密
-  if (isEncryptedImport.value) {
-    if (!await decryptImportBackup()) return;
-  }
-
-  if (!pendingImportData.value?.secrets || !Array.isArray(pendingImportData.value.secrets)) {
-    showToast('备份数据无效');
-    return;
-  }
-
-  if (!Array.isArray(secrets.value)) {
-    secrets.value = [];
-  }
-
-  let added = 0, skipped = 0;
-  for (const secret of pendingImportData.value.secrets) {
-    const exists = secrets.value.some(s =>
-      s.site.toLowerCase() === secret.site?.toLowerCase()
-    );
-    if (!exists) {
-      secrets.value.push({
-        ...secret,
-        id: secret.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        importedAt: new Date().toISOString()
-      });
-      added++;
-      startCardTimer(secrets.value[secrets.value.length - 1]);
-    } else {
-      skipped++;
-    }
-  }
-
+  secrets.value = Array.isArray(secrets.value)
+    ? secrets.value.filter(item => item.id !== secret.id)
+    : [];
   await saveSecrets();
-  showRestoreModal.value = false;
-  pendingImportData.value = null;
-  importPassword.value = '';
-  importPasswordError.value = '';
-  showToast(skipped > 0 ? `已导入 ${added} 个，跳过 ${skipped} 个重复` : `已导入 ${added} 个密钥`, true);
+  showToast('密钥已删除');
+  restartCodeUpdater();
 }
 
-async function overwriteImport() {
-  // 如果是加密备份，先解密
-  if (isEncryptedImport.value) {
-    if (!await decryptImportBackup()) return;
-  }
-
-  if (!pendingImportData.value?.secrets || !Array.isArray(pendingImportData.value.secrets)) {
-    showToast('备份数据无效');
-    return;
-  }
-
-  if (!confirm('覆盖将删除所有现有密钥，确定继续吗？')) return;
-
-  clearAllTimers();
-  secrets.value = pendingImportData.value.secrets.map(secret => ({
-    ...secret,
-    id: secret.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
-    importedAt: new Date().toISOString()
-  }));
-
-  await saveSecrets();
-  showRestoreModal.value = false;
-  pendingImportData.value = null;
-  importPassword.value = '';
-  importPasswordError.value = '';
-  showToast(`已导入 ${secrets.value.length} 个密钥`, true);
-  startCodeUpdater();
+function openManagerForRepair() {
+  showRepairModal.value = false;
+  openOptionsPage();
 }
 
-// 打开管理页面（在新标签页打开，类似 LastPass）
+// 打开管理页面
 function openOptionsPage() {
   showMenu.value = false;
   chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
@@ -561,7 +681,7 @@ function openSetupPage() {
       <header class="header">
         <h1 class="title">OpenPass</h1>
         <div class="header-actions">
-          <button class="icon-btn" title="添加密钥" @click="currentPage = 'create'">
+          <button class="icon-btn" title="添加密钥" @click="openCreatePage">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="16" />
@@ -577,23 +697,6 @@ function openSetupPage() {
               </svg>
             </button>
             <div class="dropdown-menu" :class="{ hidden: !showMenu }">
-              <button class="dropdown-item" @click="exportSecrets">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span>导出备份</span>
-              </button>
-              <button class="dropdown-item" @click="triggerImport">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                <span>导入备份</span>
-              </button>
-              <div class="dropdown-divider" />
               <button class="dropdown-item" @click="showAboutModal = true; showMenu = false">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="10" />
@@ -615,9 +718,9 @@ function openSetupPage() {
         </div>
       </header>
 
-      <!-- 主内容 -->
+      <!-- 主要内容 -->
       <main class="main-content">
-        <!-- 主页 -->
+        <!-- 首页 -->
         <div class="page" :class="{ active: currentPage === 'home' }">
           <!-- 搜索框 -->
           <div class="search-box">
@@ -625,10 +728,10 @@ function openSetupPage() {
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
-            <input type="text" v-model="searchQuery" placeholder="搜索站点或名称...">
+            <input v-model="searchQuery" type="text" placeholder="搜索站点或名称...">
           </div>
 
-          <!-- 当前网站匹配 -->
+          <!-- 当前站点匹配 -->
           <div v-if="currentSiteMatches.length > 0" class="current-site-match">
             <div class="match-header">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -636,7 +739,7 @@ function openSetupPage() {
                 <line x1="12" y1="16" x2="12" y2="12" />
                 <line x1="12" y1="8" x2="12.01" y2="8" />
               </svg>
-              <span>当前网站</span>
+              <span>当前站点</span>
             </div>
             <div class="current-site-codes">
               <div v-for="secret in currentSiteMatches" :key="secret.id" class="secret-card" @click="copyCode(secret)">
@@ -655,10 +758,10 @@ function openSetupPage() {
                   </div>
                 </div>
                 <div class="secret-card-code">
-                  <span class="otp-display">{{ formatCode(codeData.get(secret.id)?.code || '------') }}</span>
-                  <span class="timer-badge" :class="{ warning: codeData.get(secret.id)?.remainingSeconds <= 10, danger: codeData.get(secret.id)?.remainingSeconds <= 5 }">
-                    <span class="timer-progress" :style="{ width: ((codeData.get(secret.id)?.remainingSeconds || 30) / 30 * 100) + '%' }" />
-                    <span class="timer-text">{{ codeData.get(secret.id)?.remainingSeconds || 30 }}s</span>
+                  <span class="otp-display">{{ getCode(secret.id) }}</span>
+                  <span class="timer-badge" :class="{ warning: isWarning(secret.id), danger: isDanger(secret.id) }">
+                    <span class="timer-progress" :style="{ width: getTimerProgress(secret.id) }" />
+                    <span class="timer-text">{{ getRemainingSeconds(secret.id) }}s</span>
                   </span>
                 </div>
               </div>
@@ -685,7 +788,7 @@ function openSetupPage() {
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                       </svg>
                     </button>
-                    <button class="menu-btn delete" title="删除" @click.stop="showEditPage(secret)">
+                    <button class="menu-btn delete" title="删除" @click.stop="deleteSecretFromList(secret)">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6" />
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -694,10 +797,10 @@ function openSetupPage() {
                   </div>
                 </div>
                 <div class="secret-card-code">
-                  <span class="otp-display">{{ formatCode(codeData.get(secret.id)?.code || '------') }}</span>
-                  <span class="timer-badge" :class="{ warning: codeData.get(secret.id)?.remainingSeconds <= 10, danger: codeData.get(secret.id)?.remainingSeconds <= 5 }">
-                    <span class="timer-progress" :style="{ width: ((codeData.get(secret.id)?.remainingSeconds || 30) / 30 * 100) + '%' }" />
-                    <span class="timer-text">{{ codeData.get(secret.id)?.remainingSeconds || 30 }}s</span>
+                  <span class="otp-display">{{ getCode(secret.id) }}</span>
+                  <span class="timer-badge" :class="{ warning: isWarning(secret.id), danger: isDanger(secret.id) }">
+                    <span class="timer-progress" :style="{ width: getTimerProgress(secret.id) }" />
+                    <span class="timer-text">{{ getRemainingSeconds(secret.id) }}s</span>
                   </span>
                 </div>
               </div>
@@ -725,7 +828,7 @@ function openSetupPage() {
                 <div class="stats-count">{{ secrets.length }}</div>
                 <div class="stats-label">个密钥</div>
               </div>
-              <button class="stats-add-btn" title="添加密钥" @click="currentPage = 'create'">
+              <button class="stats-add-btn" title="添加密钥" @click="openCreatePage">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
@@ -735,7 +838,7 @@ function openSetupPage() {
 
             <!-- 快捷操作 -->
             <div class="quick-actions">
-              <button class="quick-action-btn" @click="currentPage = 'create'">
+              <button class="quick-action-btn" @click="openCreatePage">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="3" y="3" width="7" height="7" />
                   <rect x="14" y="3" width="7" height="7" />
@@ -788,7 +891,7 @@ function openSetupPage() {
         <!-- 创建页 -->
         <div class="page" :class="{ active: currentPage === 'create' }">
           <div class="page-header">
-            <button class="back-btn" @click="currentPage = 'home'">
+            <button class="back-btn" @click="showHomePage">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
@@ -799,8 +902,8 @@ function openSetupPage() {
           <form class="create-form" @submit.prevent="createSecret">
             <div class="form-group">
               <label>密钥</label>
-              <input type="text" v-model="createForm.secret" @input="formatSecretInput" placeholder="输入密钥" autocomplete="off" spellcheck="false">
-              <span class="hint-text">支持标准 TOTP 密钥格式，如：JBSWY3DPEHPK3PXP</span>
+              <input v-model="createForm.secret" type="text" placeholder="输入密钥" autocomplete="off" spellcheck="false" @input="formatSecretInput">
+              <span class="hint-text">支持标准 TOTP 密钥格式，例如：JBSWY3DPEHPK3PXP</span>
               <span class="error-text">{{ createError }}</span>
             </div>
 
@@ -823,13 +926,13 @@ function openSetupPage() {
 
             <div class="form-group">
               <label>目标站点</label>
-              <input type="text" v-model="createForm.site" placeholder="例如: github.com" autocomplete="off">
+              <input v-model="createForm.site" type="text" placeholder="例如: github.com" autocomplete="off">
               <span class="hint-text">支持完整 URL 或域名匹配</span>
             </div>
 
             <div class="form-group">
               <label>名称（可选）</label>
-              <input type="text" v-model="createForm.name" placeholder="例如: GitHub" autocomplete="off">
+              <input v-model="createForm.name" type="text" placeholder="例如: GitHub" autocomplete="off">
             </div>
 
             <button type="submit" class="btn-primary">保存密钥</button>
@@ -839,7 +942,7 @@ function openSetupPage() {
         <!-- 编辑页 -->
         <div class="page" :class="{ active: currentPage === 'edit' }">
           <div class="page-header">
-            <button class="back-btn" @click="currentPage = 'home'">
+            <button class="back-btn" @click="showHomePage">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
@@ -856,7 +959,7 @@ function openSetupPage() {
           <form v-if="editingSecret" class="create-form" @submit.prevent="updateSecret">
             <div class="form-group">
               <label>密钥</label>
-              <input type="text" v-model="editingSecret.secret" autocomplete="off" spellcheck="false">
+              <input v-model="editingSecret.secret" type="text" autocomplete="off" spellcheck="false">
             </div>
 
             <div class="form-group">
@@ -869,12 +972,12 @@ function openSetupPage() {
 
             <div class="form-group">
               <label>目标站点</label>
-              <input type="text" v-model="editingSecret.site" autocomplete="off">
+              <input v-model="editingSecret.site" type="text" autocomplete="off">
             </div>
 
             <div class="form-group">
               <label>名称（可选）</label>
-              <input type="text" v-model="editingSecret.name" autocomplete="off">
+              <input v-model="editingSecret.name" type="text" autocomplete="off">
             </div>
 
             <button type="submit" class="btn-primary">保存修改</button>
@@ -886,44 +989,6 @@ function openSetupPage() {
     <!-- Toast -->
     <div class="toast" :class="{ show: toastVisible, success: toastSuccess }">
       {{ toastMessage }}
-    </div>
-
-    <!-- 恢复对话框 -->
-    <div v-if="showRestoreModal" class="modal">
-      <div class="modal-overlay" @click="showRestoreModal = false; pendingImportData = null" />
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3>导入备份</h3>
-        </div>
-        <div class="modal-body">
-          <div class="backup-info">
-            <div class="backup-info-item">
-              <span class="backup-info-label">备份版本</span>
-              <span class="backup-info-value">v{{ pendingImportData?.appVersion || '-' }}</span>
-            </div>
-            <div class="backup-info-item">
-              <span class="backup-info-label">导出时间</span>
-              <span class="backup-info-value">{{ pendingImportData?.exportTime ? new Date(pendingImportData.exportTime).toLocaleString('zh-CN') : '-' }}</span>
-            </div>
-          </div>
-
-          <div class="import-count-info">
-            <span>备份包含 <strong>{{ pendingImportData?.count || pendingImportData?.secrets?.length || 0 }}</strong> 个密钥</span>
-            <span>当前已有 <strong>{{ secrets.length }}</strong> 个密钥</span>
-          </div>
-
-          <div v-if="isEncryptedImport" class="decrypt-section">
-            <p class="decrypt-hint">备份已加密，请输入解密密码</p>
-            <input type="password" v-model="importPassword" placeholder="输入解密密码" class="decrypt-input">
-            <p v-if="importPasswordError" class="decrypt-error">{{ importPasswordError }}</p>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn-secondary" @click="showRestoreModal = false; pendingImportData = null">取消</button>
-          <button class="btn-primary" @click="mergeImport">合并</button>
-          <button class="btn-danger" @click="overwriteImport">覆盖</button>
-        </div>
-      </div>
     </div>
 
     <!-- 关于对话框 -->
@@ -954,6 +1019,31 @@ function openSetupPage() {
               </svg>
               GitHub
             </a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 修复数据模态框 -->
+    <div v-if="showRepairModal" class="modal">
+      <div class="modal-overlay" @click="showRepairModal = false" />
+      <div class="modal-content repair-modal">
+        <div class="modal-header">
+          <h3>数据修复</h3>
+          <button class="modal-close" @click="showRepairModal = false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="repair-desc">
+            {{ repairError || '检测到 popup 数据需要同步，请打开管理后台处理。' }}
+          </p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" @click="showRepairModal = false">关闭</button>
+            <button type="button" class="btn-primary" @click="openManagerForRepair">打开管理后台</button>
           </div>
         </div>
       </div>
@@ -1044,7 +1134,7 @@ body {
   color: var(--primary-color);
 }
 
-/* 下拉菜单 */
+/* 涓嬫媺鑿滃崟 */
 .dropdown {
   position: relative;
 }
@@ -1095,7 +1185,7 @@ body {
   margin: 6px 0;
 }
 
-/* 主内容区 */
+/* 主要内容区 */
 .main-content {
   flex: 1;
   overflow-y: auto;
@@ -1145,7 +1235,7 @@ body {
   color: var(--text-muted);
 }
 
-/* 当前网站匹配 */
+/* 当前站点匹配 */
 .current-site-match {
   background: var(--primary-light);
   border: 1px solid var(--primary-color);
@@ -1492,12 +1582,18 @@ body {
 .empty-state {
   text-align: center;
   padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .empty-icon {
   margin-bottom: 12px;
   opacity: 0.4;
   color: var(--text-muted);
+  display: flex;
+  justify-content: center;
 }
 
 .empty-state h3 {
@@ -1749,7 +1845,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 1000;
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1762,6 +1858,7 @@ body {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
+  z-index: 1;
 }
 
 .modal-content {
@@ -1772,6 +1869,7 @@ body {
   max-width: 340px;
   max-height: 90%;
   overflow: auto;
+  z-index: 2;
 }
 
 .modal-header {
@@ -1926,5 +2024,51 @@ body {
 
 .about-link:hover {
   text-decoration: underline;
+}
+
+/* 修复模态框 */
+.repair-modal {
+  max-width: 300px;
+}
+
+.repair-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.repair-modal .form-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.repair-modal .error-text {
+  color: var(--error-color);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.repair-modal .modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.repair-modal .btn-cancel {
+  padding: 8px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.repair-modal .btn-cancel:hover {
+  background: var(--bg-hover);
 }
 </style>
