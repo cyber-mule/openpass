@@ -37,11 +37,11 @@ export default defineConfig({
     name: 'OpenPass',
     version: '0.2.0',
     description: '开源的 2FA 认证工具，本地存储密钥，一键生成验证码',
-    options_page: 'options.html',
     homepage_url: 'https://github.com/cyber-mule/openpass',
     key: getExtensionKey(),
     permissions: [
       'storage',
+      'downloads',
       'activeTab',
       'tabs',
       'contextMenus',

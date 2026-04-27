@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useSecretStore } from '@/stores/secrets';
 import { useAuthStore } from '@/stores/auth';
 import { useAutoBackup, type DirectoryInfo } from '@/composables/useAutoBackup';
@@ -24,7 +24,13 @@ const enableDirectoryBackup = ref(false);
 const lastBackupTime = ref<string | null>(null);
 const nextBackupTime = ref<string | null>(null);
 
-const directoryInfo = ref<DirectoryInfo>({ hasHandle: false, name: null, permission: 'no-handle' });
+const directoryInfo = ref<DirectoryInfo>({
+  hasHandle: false,
+  name: null,
+  permission: 'no-handle',
+  usesDefaultPath: true,
+  locationLabel: 'Downloads/.openpass'
+});
 
 const showPasswordModal = ref(false);
 const currentPassword = ref('');
@@ -92,19 +98,6 @@ const formattedNextBackupTime = computed(() => {
   if (diffDays > 0) return `${diffDays} 天后`;
   if (diffHours > 0) return `${diffHours} 小时后`;
   return '即将';
-});
-
-watch(enableDirectoryBackup, async (enabled) => {
-  if (!isInitialized.value) return;
-
-  if (enabled && !directoryInfo.value.hasHandle) {
-    await handleSelectDirectory();
-    if (!directoryInfo.value.hasHandle) {
-      enableDirectoryBackup.value = false;
-    }
-  }
-
-  await saveBackupSettings();
 });
 
 async function saveBackupSettings() {
@@ -243,7 +236,9 @@ async function handleBackupNow() {
 
     const messages = [];
     if (results.snapshot) messages.push('本地快照已保存');
-    if (results.directory?.success) messages.push(`文件已保存到 ${results.directory.filename}`);
+    if (results.directory?.success) {
+      messages.push(`文件已保存到 ${results.directory.locationLabel ?? results.directory.filename}`);
+    }
 
     if (messages.length > 0) {
       showToast(messages.join('，'), 'success');
@@ -499,7 +494,7 @@ async function resetAllData() {
           <div class="settings-item">
             <div class="settings-item-info">
               <span class="settings-item-label">自动保存到本地目录</span>
-              <span class="settings-item-desc">授权目录后自动写入备份文件，需要 Chrome 86+</span>
+              <span class="settings-item-desc">未选择自定义目录时，默认写入 Downloads/.openpass</span>
             </div>
             <label class="toggle">
               <input v-model="enableDirectoryBackup" type="checkbox" @change="saveBackupSettings">
@@ -514,9 +509,11 @@ async function resetAllData() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M22 19a2 2 0 0 0-2 2H4a2 2 0 0 0-2-2V5a2 2 0 0 0 2-2h5l2 3h9a2 2 0 0 0 2 2z"></path>
                 </svg>
-                <span>{{ directoryInfo.hasHandle ? `已选择: ${directoryInfo.name}` : '未选择目录' }}</span>
+                <span>{{ directoryInfo.hasHandle ? `已选择: ${directoryInfo.locationLabel}` : `默认写入: ${directoryInfo.locationLabel}` }}</span>
               </div>
-              <button class="btn-secondary btn-sm" @click="handleSelectDirectory">选择目录</button>
+              <button class="btn-secondary btn-sm" @click="handleSelectDirectory">
+                {{ directoryInfo.hasHandle ? '更换目录' : '选择自定义目录' }}
+              </button>
             </div>
 
             <!-- 权限状态 -->

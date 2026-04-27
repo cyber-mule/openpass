@@ -5,6 +5,13 @@ import {
   type BackupData,
   type BackupSecretLike
 } from '@/utils/backup';
+import {
+  DEFAULT_BACKUP_LOCATION_LABEL,
+  createBackupFilename,
+  getCustomBackupLocationLabel,
+  writeBackupToDefaultDownloads,
+  type BackupDirectoryWriteResult
+} from '@/utils/backupDestination';
 import { getErrorMessage } from '@/utils/error';
 
 export interface BackupSettings {
@@ -21,6 +28,8 @@ export interface DirectoryInfo {
   hasHandle: boolean;
   name: string | null;
   permission: 'granted' | 'prompt' | 'denied' | 'no-handle';
+  usesDefaultPath: boolean;
+  locationLabel: string;
 }
 
 interface BackupSnapshot<T = BackupSecretLike> {
@@ -174,7 +183,7 @@ export function useAutoBackup() {
       if (!('showDirectoryPicker' in window)) {
         return {
           success: false,
-          error: '浏览器不支持此功能，请使用 Chrome 86 或更高版本'
+          error: '浏览器不支持选择目录，请使用 Chrome 86 或更高版本'
         };
       }
 
@@ -204,7 +213,9 @@ export function useAutoBackup() {
       return {
         hasHandle: false,
         name: null,
-        permission: 'no-handle'
+        permission: 'no-handle',
+        usesDefaultPath: true,
+        locationLabel: DEFAULT_BACKUP_LOCATION_LABEL
       };
     }
 
@@ -213,13 +224,17 @@ export function useAutoBackup() {
       return {
         hasHandle: true,
         name: handle.name,
-        permission: permission ?? 'prompt'
+        permission: permission ?? 'prompt',
+        usesDefaultPath: false,
+        locationLabel: getCustomBackupLocationLabel(handle.name)
       };
     } catch {
       return {
         hasHandle: true,
         name: handle.name,
-        permission: 'prompt'
+        permission: 'prompt',
+        usesDefaultPath: false,
+        locationLabel: getCustomBackupLocationLabel(handle.name)
       };
     }
   }
@@ -240,12 +255,12 @@ export function useAutoBackup() {
 
   async function writeToDirectory<T extends BackupSecretLike>(
     backupData: BackupData<T>
-  ): Promise<{ success: boolean; filename?: string; error?: string; needAuth?: boolean }> {
+  ): Promise<BackupDirectoryWriteResult> {
     try {
       const handle = await getStoredHandle();
 
       if (!handle) {
-        return { success: false, error: '未选择备份目录', needAuth: false };
+        return writeBackupToDefaultDownloads(backupData);
       }
 
       let permission = (await handle.queryPermission?.({ mode: 'readwrite' })) ?? 'prompt';
@@ -261,16 +276,18 @@ export function useAutoBackup() {
         };
       }
 
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const suffix = backupData.encrypted ? '-encrypted' : '';
-      const filename = `openpass-backup-${timestamp}${suffix}.json`;
-
+      const filename = createBackupFilename(backupData.encrypted);
       const fileHandle = await handle.getFileHandle(filename, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(JSON.stringify(backupData, null, 2));
       await writable.close();
 
-      return { success: true, filename };
+      return {
+        success: true,
+        filename,
+        locationLabel: getCustomBackupLocationLabel(handle.name, filename),
+        usesDefaultPath: false
+      };
     } catch (error) {
       return { success: false, error: getErrorMessage(error) };
     }
@@ -301,7 +318,7 @@ export function useAutoBackup() {
     const backupData = await createBackup(secrets, options);
     const results: {
       snapshot: boolean;
-      directory?: { success: boolean; filename?: string; error?: string; needAuth?: boolean };
+      directory?: BackupDirectoryWriteResult;
     } = {
       snapshot: false,
       directory: undefined

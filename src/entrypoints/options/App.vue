@@ -10,6 +10,7 @@ import BackupPanel from '@/components/manager/BackupPanel.vue';
 import SettingsPanel from '@/components/manager/SettingsPanel.vue';
 import AboutPanel from '@/components/manager/AboutPanel.vue';
 import WelcomeGuide from '@/components/manager/WelcomeGuide.vue';
+import ErrorCenter from '@/components/manager/ErrorCenter.vue';
 import type { Secret } from '@/stores/secrets';
 import { showToast } from '@/utils/ui';
 
@@ -18,6 +19,7 @@ const secretStore = useSecretStore();
 
 const currentPage = ref('secrets');
 const showWelcome = ref(false);
+const welcomeGuideKey = ref(0);
 const showSecretModal = ref(false);
 const editingSecret = ref<Secret | null>(null);
 const loading = ref(true);
@@ -127,7 +129,7 @@ const shortcuts = useKeyboardShortcuts({
   },
   onSelectNext: () => {},
   onSelectPrevious: () => {},
-  isModalOpen: () => showSecretModal.value,
+  isModalOpen: () => showSecretModal.value || showWelcome.value,
   isInputFocused: () => {
     const tag = document.activeElement?.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
@@ -225,6 +227,17 @@ function handleWelcomeNavigate(page: string) {
   currentPage.value = page;
 }
 
+watch(showWelcome, (visible) => {
+  if (!visible) {
+    return;
+  }
+
+  welcomeGuideKey.value += 1;
+  if (showSecretModal.value) {
+    handleModalClose();
+  }
+});
+
 watch(
   () => [currentPage.value, secretStore.searchQuery, secretStore.secrets.length],
   () => {
@@ -281,9 +294,12 @@ watch(
 
     <!-- 欢迎引导 -->
     <WelcomeGuide
+      :key="welcomeGuideKey"
       v-if="showWelcome"
       @close="handleWelcomeClose"
       @navigate="handleWelcomeNavigate"
     />
+
+    <ErrorCenter />
   </div>
 </template>

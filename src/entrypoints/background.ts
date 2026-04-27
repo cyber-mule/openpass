@@ -6,6 +6,13 @@ import {
   resolveStoredBackupPassword,
   saveBackupSnapshot
 } from '@/utils/backup';
+import {
+  createBackupFilename,
+  getCustomBackupLocationLabel,
+  writeBackupToDefaultDownloads,
+  type BackupDirectoryWriteResult
+} from '@/utils/backupDestination';
+import { installGlobalRuntimeErrorListeners } from '@/utils/runtimeErrors';
 
 type BackupFrequency = 'daily' | 'weekly' | 'monthly';
 
@@ -27,6 +34,13 @@ const BACKUP_DB_VERSION = 1;
 const BACKUP_HANDLE_STORE = 'handles';
 
 export default defineBackground(() => {
+  installGlobalRuntimeErrorListeners('background', self as unknown as {
+    addEventListener: (
+      type: 'error' | 'unhandledrejection',
+      listener: (event: any) => void
+    ) => void;
+  });
+
   // SessionKey 内存缓存，供自动备份解密使用
   let cachedSessionKey: string | null = null;
 
@@ -123,11 +137,11 @@ export default defineBackground(() => {
     });
   }
 
-  async function writeBackupToDirectory(backupData: unknown) {
+  async function writeBackupToDirectory(backupData: unknown): Promise<BackupDirectoryWriteResult> {
     try {
       const handle = await getStoredBackupHandle();
       if (!handle) {
-        return { success: false, error: '未选择备份目录', needAuth: false };
+        return writeBackupToDefaultDownloads(backupData);
       }
 
       let permission = (await handle.queryPermission?.({ mode: 'readwrite' })) ?? 'prompt';
@@ -143,20 +157,22 @@ export default defineBackground(() => {
         };
       }
 
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const suffix =
+      const filename = createBackupFilename(
         typeof backupData === 'object' && backupData !== null && 'encrypted' in backupData &&
-        (backupData as { encrypted?: boolean }).encrypted
-          ? '-encrypted'
-          : '';
-      const filename = `openpass-backup-${timestamp}${suffix}.json`;
+          (backupData as { encrypted?: boolean }).encrypted === true
+      );
 
       const fileHandle = await handle.getFileHandle(filename, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(JSON.stringify(backupData, null, 2));
       await writable.close();
 
-      return { success: true, filename };
+      return {
+        success: true,
+        filename,
+        locationLabel: getCustomBackupLocationLabel(handle.name, filename),
+        usesDefaultPath: false
+      };
     } catch (error) {
       return {
         success: false,
@@ -433,9 +449,7 @@ export default defineBackground(() => {
 
       const backupData = await createBackupData(secrets, backupPassword);
       let savedSnapshot = false;
-      let directoryResult:
-        | { success: boolean; filename?: string; error?: string; needAuth?: boolean }
-        | undefined;
+      let directoryResult: BackupDirectoryWriteResult | undefined;
 
       if (settings.enableLocalSnapshot) {
         await saveBackupSnapshot(backupData);
@@ -470,7 +484,7 @@ export default defineBackground(() => {
         messages.push(`已备份 ${secrets.length} 个密钥到本地快照`);
       }
       if (directoryResult?.success) {
-        messages.push(`已写入 ${directoryResult.filename}`);
+        messages.push(`已写入 ${directoryResult.locationLabel ?? directoryResult.filename}`);
       }
 
       if (messages.length > 0) {

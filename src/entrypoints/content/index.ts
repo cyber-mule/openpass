@@ -1,3 +1,5 @@
+import { installGlobalRuntimeErrorListeners } from '@/utils/runtimeErrors';
+
 interface ContentSecret {
   secret: string;
   site: string;
@@ -45,6 +47,8 @@ const CONFIG = {
   targetLengths: [6, 8],
   checkInterval: 1000
 } as const;
+
+installGlobalRuntimeErrorListeners('content');
 
 export default defineContentScript({
   matches: ['<all_urls>'],

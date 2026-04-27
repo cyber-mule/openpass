@@ -26,10 +26,6 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
     // 由调用者处理模态框关闭
   }
 
-  function handleEnter() {
-    config.onCopy();
-  }
-
   function handleKeyDown(e: KeyboardEvent) {
     const isInputFocused = config.isInputFocused();
     const isModalOpen = config.isModalOpen();
@@ -51,9 +47,6 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
 
     // 模态框打开时，只处理 Enter
     if (isModalOpen) {
-      if (e.key === 'Enter') {
-        handleEnter();
-      }
       return;
     }
 
