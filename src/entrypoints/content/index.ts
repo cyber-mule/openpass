@@ -48,7 +48,9 @@ const CONFIG = {
   checkInterval: 1000
 } as const;
 
-installGlobalRuntimeErrorListeners('content');
+installGlobalRuntimeErrorListeners('content', window, {
+  ignoreExternalScriptErrors: true
+});
 
 export default defineContentScript({
   matches: ['<all_urls>'],

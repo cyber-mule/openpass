@@ -115,8 +115,15 @@ export function useAutoBackup() {
 
   async function setupAlarm() {
     await chrome.alarms.clear(ALARM_NAME);
+    const nextBackupTime = settings.value.nextBackupTime
+      ? new Date(settings.value.nextBackupTime).getTime()
+      : Number.NaN;
+    const delayInMinutes = Number.isFinite(nextBackupTime)
+      ? Math.max(1, Math.ceil((nextBackupTime - Date.now()) / (60 * 1000)))
+      : 60;
+
     chrome.alarms.create(ALARM_NAME, {
-      delayInMinutes: 60,
+      delayInMinutes,
       periodInMinutes: 60
     });
   }

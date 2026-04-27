@@ -1,6 +1,7 @@
 ﻿import jsQR from 'jsqr';
 import { TOTP } from 'otpauth';
 import {
+  type BackupData,
   createBackupData,
   getBackupEncryptionSettings,
   resolveStoredBackupPassword,
@@ -32,6 +33,13 @@ interface SiteListItem {
 const BACKUP_DB_NAME = 'OpenPassBackupDB';
 const BACKUP_DB_VERSION = 1;
 const BACKUP_HANDLE_STORE = 'handles';
+const AUTO_BACKUP_ALARM_NAME = 'openpass-auto-backup';
+
+const BACKUP_INTERVALS: Record<BackupFrequency, number> = {
+  daily: 24 * 60 * 60 * 1000,
+  weekly: 7 * 24 * 60 * 60 * 1000,
+  monthly: 30 * 24 * 60 * 60 * 1000
+};
 
 export default defineBackground(() => {
   installGlobalRuntimeErrorListeners('background', self as unknown as {
@@ -69,9 +77,8 @@ export default defineBackground(() => {
     });
 
     // 创建自动备份定时器
-    chrome.alarms.create('openpass-auto-backup', {
-      delayInMinutes: 5,
-      periodInMinutes: 60 // 每小时检查一次
+    void syncAutoBackupAlarm().catch((error) => {
+      console.error('OpenPass: 初始化自动备份定时器失败', error);
     });
 
     // 首次安装时自动打开管理页面
@@ -380,14 +387,138 @@ export default defineBackground(() => {
         }
       });
     }
+
+    if (
+      namespace === 'local' &&
+      (changes.enableAutoBackup || changes.backupFrequency || changes.nextBackupTime)
+    ) {
+      void syncAutoBackupAlarm().catch((error) => {
+        console.error('OpenPass: 同步自动备份定时器失败', error);
+      });
+    }
   });
 
   // 自动备份定时器
   chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (alarm.name === 'openpass-auto-backup') {
+    if (alarm.name === AUTO_BACKUP_ALARM_NAME) {
       await handleAutoBackup();
     }
   });
+
+  function getBackupInterval(frequency?: BackupFrequency) {
+    return BACKUP_INTERVALS[frequency ?? 'weekly'] ?? BACKUP_INTERVALS.weekly;
+  }
+
+  function getAutoBackupDelayInMinutes(nextBackupTime?: string | null) {
+    if (!nextBackupTime) {
+      return 60;
+    }
+
+    const nextTime = new Date(nextBackupTime).getTime();
+    if (!Number.isFinite(nextTime)) {
+      return 1;
+    }
+
+    const minutesUntilNextBackup = Math.ceil((nextTime - Date.now()) / (60 * 1000));
+    return Math.max(1, minutesUntilNextBackup);
+  }
+
+  async function syncAutoBackupAlarm() {
+    const settings = await chrome.storage.local.get<{
+      enableAutoBackup?: boolean;
+      nextBackupTime?: string;
+    }>(['enableAutoBackup', 'nextBackupTime']);
+
+    await chrome.alarms.clear(AUTO_BACKUP_ALARM_NAME);
+
+    if (settings.enableAutoBackup !== true) {
+      return;
+    }
+
+    chrome.alarms.create(AUTO_BACKUP_ALARM_NAME, {
+      delayInMinutes: getAutoBackupDelayInMinutes(settings.nextBackupTime),
+      periodInMinutes: 60
+    });
+  }
+
+  async function getValidSessionKey() {
+    if (cachedSessionKey) {
+      return cachedSessionKey;
+    }
+
+    const [localResult, sessionResult] = await Promise.all([
+      chrome.storage.local.get<{ sessionExpiresAt?: number }>(['sessionExpiresAt']),
+      chrome.storage.session.get<{ sessionKey?: string }>(['sessionKey'])
+    ]);
+
+    if (
+      typeof localResult.sessionExpiresAt === 'number' &&
+      Date.now() > localResult.sessionExpiresAt
+    ) {
+      await chrome.storage.session.remove(['sessionKey']);
+      cachedSessionKey = null;
+      return null;
+    }
+
+    if (typeof sessionResult.sessionKey === 'string') {
+      cachedSessionKey = sessionResult.sessionKey;
+      return cachedSessionKey;
+    }
+
+    return null;
+  }
+
+  async function decryptStoredSecrets(encryptedSecrets: string, sessionKey: string) {
+    const CryptoUtils = await import('../utils/crypto');
+    const decrypted = await CryptoUtils.default.decrypt(encryptedSecrets, sessionKey);
+    const parsed: unknown = JSON.parse(decrypted);
+    return Array.isArray(parsed) ? (parsed as StoredSecret[]) : [];
+  }
+
+  async function resolveAutoBackupSecrets(
+    settings: { encryptedSecrets?: string; secrets?: StoredSecret[] },
+    sessionKey: string | null
+  ) {
+    if (typeof settings.encryptedSecrets === 'string' && sessionKey) {
+      try {
+        return await decryptStoredSecrets(settings.encryptedSecrets, sessionKey);
+      } catch (error) {
+        console.error('OpenPass: 自动备份解密失败，尝试使用明文缓存', error);
+      }
+    }
+
+    return Array.isArray(settings.secrets) ? settings.secrets : [];
+  }
+
+  function createMasterPasswordEncryptedBackup(
+    encryptedSecrets: string,
+    count: number
+  ): BackupData<StoredSecret> {
+    return {
+      format: 'openpass-backup',
+      formatVersion: 1,
+      appVersion: chrome.runtime.getManifest().version || '0.0.0',
+      exportTime: new Date().toISOString(),
+      exportPlatform: typeof navigator !== 'undefined' ? navigator.platform : undefined,
+      count,
+      encrypted: true,
+      encryptedData: encryptedSecrets,
+      encryptionVersion: 1,
+      kdf: 'PBKDF2',
+      kdfIterations: 100000
+    };
+  }
+
+  function getStoredSecretCount(settings: {
+    secrets?: StoredSecret[];
+    sitesList?: SiteListItem[];
+  }) {
+    if (Array.isArray(settings.secrets)) {
+      return settings.secrets.length;
+    }
+
+    return Array.isArray(settings.sitesList) ? settings.sitesList.length : 0;
+  }
 
   async function handleAutoBackup() {
     try {
@@ -401,57 +532,56 @@ export default defineBackground(() => {
         enableDirectoryBackup?: boolean;
         encryptedSecrets?: string;
         secrets?: StoredSecret[];
+        sitesList?: SiteListItem[];
       }>([
         'enableAutoBackup',
         'backupFrequency',
         'enableLocalSnapshot',
         'enableDirectoryBackup',
         'encryptedSecrets',
-        'secrets'
+        'secrets',
+        'sitesList'
       ]);
 
       if (settings.enableAutoBackup !== true) return;
 
-      let secrets: StoredSecret[] = [];
-      
-      // 如果存在加密密钥，尝试使用缓存的 sessionKey 解密
-      if (typeof settings.encryptedSecrets === 'string') {
-        if (!cachedSessionKey) {
-          return; // 用户未解锁，跳过备份
-        }
-        
-        try {
-          const CryptoUtils = await import('../utils/crypto');
-          const decrypted = await CryptoUtils.default.decrypt(
-            settings.encryptedSecrets,
-            cachedSessionKey
-          );
-          secrets = JSON.parse(decrypted);
-        } catch (error) {
-          console.error('OpenPass: 自动备份解密失败', error);
+      const sessionKey = await getValidSessionKey();
+      const encryptionSettings = await getBackupEncryptionSettings();
+      let backupCount = 0;
+      let backupData: BackupData<StoredSecret>;
+
+      if (
+        encryptionSettings.enableBackupEncryption &&
+        encryptionSettings.useMasterPasswordForBackup &&
+        typeof settings.encryptedSecrets === 'string'
+      ) {
+        backupCount = getStoredSecretCount(settings);
+        backupData = createMasterPasswordEncryptedBackup(
+          settings.encryptedSecrets,
+          backupCount
+        );
+      } else {
+        const secrets = await resolveAutoBackupSecrets(settings, sessionKey);
+        if (secrets.length === 0) return;
+
+        const backupPassword = await resolveStoredBackupPassword(
+          sessionKey,
+          encryptionSettings
+        );
+
+        if (encryptionSettings.enableBackupEncryption && !backupPassword) {
+          showNotification('自动备份跳过', '请先解锁 OpenPass 或检查备份加密设置');
           return;
         }
-      } else if (Array.isArray(settings.secrets)) {
-        secrets = settings.secrets;
+
+        backupCount = secrets.length;
+        backupData = await createBackupData(secrets, backupPassword);
       }
 
-      if (secrets.length === 0) return;
-
-      const encryptionSettings = await getBackupEncryptionSettings();
-      const backupPassword = await resolveStoredBackupPassword(
-        cachedSessionKey,
-        encryptionSettings
-      );
-
-      if (encryptionSettings.enableBackupEncryption && !backupPassword) {
-        return;
-      }
-
-      const backupData = await createBackupData(secrets, backupPassword);
       let savedSnapshot = false;
       let directoryResult: BackupDirectoryWriteResult | undefined;
 
-      if (settings.enableLocalSnapshot) {
+      if (settings.enableLocalSnapshot !== false) {
         await saveBackupSnapshot(backupData);
         savedSnapshot = true;
       }
@@ -467,11 +597,7 @@ export default defineBackground(() => {
         return;
       }
 
-      const interval = {
-        daily: 24 * 60 * 60 * 1000,
-        weekly: 7 * 24 * 60 * 60 * 1000,
-        monthly: 30 * 24 * 60 * 60 * 1000
-      }[(settings.backupFrequency ?? 'weekly') as BackupFrequency] || 7 * 24 * 60 * 60 * 1000;
+      const interval = getBackupInterval(settings.backupFrequency);
       const now = new Date();
 
       await chrome.storage.local.set({
@@ -481,7 +607,7 @@ export default defineBackground(() => {
 
       const messages = [];
       if (savedSnapshot) {
-        messages.push(`已备份 ${secrets.length} 个密钥到本地快照`);
+        messages.push(`已备份 ${backupCount} 个密钥到本地快照`);
       }
       if (directoryResult?.success) {
         messages.push(`已写入 ${directoryResult.locationLabel ?? directoryResult.filename}`);
@@ -489,7 +615,8 @@ export default defineBackground(() => {
 
       if (messages.length > 0) {
         showNotification('自动备份完成', messages.join('；'));
-      }    } catch (error) {
+      }
+    } catch (error) {
       console.error('OpenPass: 自动备份失败', error);
       showNotification('自动备份失败', (error as Error).message);
     }
@@ -500,27 +627,32 @@ export default defineBackground(() => {
       enableAutoBackup?: boolean;
       backupFrequency?: BackupFrequency;
       lastBackupTime?: string;
+      nextBackupTime?: string;
     }>([
       'enableAutoBackup',
       'backupFrequency',
-      'lastBackupTime'
+      'lastBackupTime',
+      'nextBackupTime'
     ]);
 
     if (settings.enableAutoBackup !== true) {
       return { needed: false, reason: 'disabled' };
     }
 
+    if (settings.nextBackupTime) {
+      const nextBackupTime = new Date(settings.nextBackupTime).getTime();
+      if (!Number.isFinite(nextBackupTime) || Date.now() >= nextBackupTime) {
+        return { needed: true, reason: 'due' };
+      }
+
+      return { needed: false, reason: 'not_due' };
+    }
+
     if (!settings.lastBackupTime) {
       return { needed: true, reason: 'never' };
     }
 
-    const intervals: Record<BackupFrequency, number> = {
-      daily: 24 * 60 * 60 * 1000,
-      weekly: 7 * 24 * 60 * 60 * 1000,
-      monthly: 30 * 24 * 60 * 60 * 1000
-    };
-
-    const interval = intervals[settings.backupFrequency ?? 'weekly'] || intervals.weekly;
+    const interval = getBackupInterval(settings.backupFrequency);
     const lastBackup = new Date(settings.lastBackupTime);
     const elapsed = Date.now() - lastBackup.getTime();
 
@@ -533,20 +665,14 @@ export default defineBackground(() => {
 
   // 扩展启动时检查备份
   chrome.runtime.onStartup.addListener(async () => {
-    const checkResult = await checkBackupNeeded();
-    if (checkResult.needed) {
-      chrome.alarms.create('openpass-auto-backup', { delayInMinutes: 5 });
-    }
+    await syncAutoBackupAlarm();
   });
 
   // 扩展更新时检查备份
   chrome.runtime.onInstalled.addListener(async (details) => {
     if (details.reason === 'install') return;
 
-    const checkResult = await checkBackupNeeded();
-    if (checkResult.needed) {
-      chrome.alarms.create('openpass-auto-backup', { delayInMinutes: 5 });
-    }
+    await syncAutoBackupAlarm();
   });
 
   function parseUrl(url: string) {

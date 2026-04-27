@@ -20,8 +20,56 @@ type ErrorEventTarget = {
   ) => void;
 };
 
+interface RuntimeErrorListenerOptions {
+  ignoreExternalScriptErrors?: boolean;
+}
+
 function createErrorId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getExtensionUrlPrefix() {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.id) {
+      return null;
+    }
+
+    return chrome.runtime.getURL('');
+  } catch {
+    return null;
+  }
+}
+
+function hasExtensionSource(error: unknown, filename?: string) {
+  const extensionUrlPrefix = getExtensionUrlPrefix();
+  if (!extensionUrlPrefix) {
+    return true;
+  }
+
+  if (typeof filename === 'string' && filename.startsWith(extensionUrlPrefix)) {
+    return true;
+  }
+
+  return error instanceof Error && Boolean(error.stack?.includes(extensionUrlPrefix));
+}
+
+function shouldIgnoreErrorEvent(event: any, options: RuntimeErrorListenerOptions) {
+  return (
+    options.ignoreExternalScriptErrors === true &&
+    !hasExtensionSource(event.error, event.filename)
+  );
+}
+
+function shouldIgnoreUnhandledRejection(event: any, options: RuntimeErrorListenerOptions) {
+  if (options.ignoreExternalScriptErrors !== true) {
+    return false;
+  }
+
+  if (event.reason instanceof Error) {
+    return !hasExtensionSource(event.reason);
+  }
+
+  return true;
 }
 
 async function readRuntimeErrors(): Promise<RuntimeErrorEntry[]> {
@@ -73,15 +121,24 @@ export async function recordRuntimeError(input: {
 
 export function installGlobalRuntimeErrorListeners(
   scope: string,
-  target: ErrorEventTarget = window
+  target: ErrorEventTarget = window,
+  options: RuntimeErrorListenerOptions = {}
 ) {
   const report = createReporter(scope);
 
   target.addEventListener('error', (event) => {
+    if (shouldIgnoreErrorEvent(event, options)) {
+      return;
+    }
+
     report(event.error ?? new Error(event.message), event.filename || 'global.error');
   });
 
   target.addEventListener('unhandledrejection', (event) => {
+    if (shouldIgnoreUnhandledRejection(event, options)) {
+      return;
+    }
+
     report(event.reason, 'unhandledrejection');
   });
 }
