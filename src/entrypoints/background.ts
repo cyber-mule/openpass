@@ -509,16 +509,22 @@ export default defineBackground(() => {
     };
   }
 
-  function getStoredSecretCount(settings: {
-    secrets?: StoredSecret[];
-    sitesList?: SiteListItem[];
-  }) {
-    if (Array.isArray(settings.secrets)) {
-      return settings.secrets.length;
-    }
+   function getStoredSecretCount(settings: {
+     secrets?: StoredSecret[];
+     sitesList?: SiteListItem[];
+     encryptedSecrets?: string;
+   }) {
+     if (Array.isArray(settings.secrets)) {
+       return settings.secrets.length;
+     }
 
-    return Array.isArray(settings.sitesList) ? settings.sitesList.length : 0;
-  }
+     if (Array.isArray(settings.sitesList)) {
+       return settings.sitesList.length;
+     }
+
+     // 如果有 encryptedSecrets 说明至少有一个加密密钥，至少返回 1 而不是 0
+     return typeof settings.encryptedSecrets === 'string' ? 1 : 0;
+   }
 
   async function handleAutoBackup() {
     try {
@@ -545,65 +551,75 @@ export default defineBackground(() => {
 
       if (settings.enableAutoBackup !== true) return;
 
-      const sessionKey = await getValidSessionKey();
-      const encryptionSettings = await getBackupEncryptionSettings();
-      let backupCount = 0;
-      let backupData: BackupData<StoredSecret>;
+       const sessionKey = await getValidSessionKey();
+       const encryptionSettings = await getBackupEncryptionSettings();
+       let backupCount = 0;
+       let backupData: BackupData<StoredSecret>;
 
-      if (
-        encryptionSettings.enableBackupEncryption &&
-        encryptionSettings.useMasterPasswordForBackup &&
-        typeof settings.encryptedSecrets === 'string'
-      ) {
-        backupCount = getStoredSecretCount(settings);
-        backupData = createMasterPasswordEncryptedBackup(
-          settings.encryptedSecrets,
-          backupCount
-        );
-      } else {
-        const secrets = await resolveAutoBackupSecrets(settings, sessionKey);
-        if (secrets.length === 0) return;
+        // 如果启用了备份加密且使用主密码且已有加密密钥，直接走快速路径
+        // 复用已加密的数据，不需要sessionKey，即使会话过期也能备份
+        if (
+          encryptionSettings.enableBackupEncryption &&
+          encryptionSettings.useMasterPasswordForBackup &&
+          typeof settings.encryptedSecrets === 'string'
+        ) {
+          backupCount = getStoredSecretCount(settings);
+          backupData = createMasterPasswordEncryptedBackup(
+            settings.encryptedSecrets,
+            backupCount
+          );
+        } else {
+          const secrets = await resolveAutoBackupSecrets(settings, sessionKey);
+          if (secrets.length === 0) return;
 
-        const backupPassword = await resolveStoredBackupPassword(
-          sessionKey,
-          encryptionSettings
-        );
+          const backupPassword = await resolveStoredBackupPassword(
+            sessionKey,
+            encryptionSettings
+          );
 
-        if (encryptionSettings.enableBackupEncryption && !backupPassword) {
-          showNotification('自动备份跳过', '请先解锁 OpenPass 或检查备份加密设置');
-          return;
+          if (encryptionSettings.enableBackupEncryption && !backupPassword) {
+            showNotification('自动备份跳过', '请先解锁 OpenPass 或检查备份加密设置');
+            return;
+          }
+
+          backupCount = secrets.length;
+          backupData = await createBackupData(secrets, backupPassword);
         }
 
-        backupCount = secrets.length;
-        backupData = await createBackupData(secrets, backupPassword);
-      }
+       let savedSnapshot = false;
+       let directoryResult: BackupDirectoryWriteResult | undefined;
 
-      let savedSnapshot = false;
-      let directoryResult: BackupDirectoryWriteResult | undefined;
+       if (settings.enableLocalSnapshot !== false) {
+         await saveBackupSnapshot(backupData);
+         savedSnapshot = true;
+       }
 
-      if (settings.enableLocalSnapshot !== false) {
-        await saveBackupSnapshot(backupData);
-        savedSnapshot = true;
-      }
+       if (settings.enableDirectoryBackup) {
+         directoryResult = await writeBackupToDirectory(backupData);
+       }
 
-      if (settings.enableDirectoryBackup) {
-        directoryResult = await writeBackupToDirectory(backupData);
-      }
+       // 如果快速路径备份计数为0，仍然需要更新下一次备份时间
+       const hasAnySuccess = savedSnapshot || (directoryResult?.success === true);
+       const isFastPathWithZeroCount = 
+         encryptionSettings.enableBackupEncryption &&
+         encryptionSettings.useMasterPasswordForBackup &&
+         typeof settings.encryptedSecrets === 'string' &&
+         backupCount === 0;
+       
+       if (!hasAnySuccess && !isFastPathWithZeroCount) {
+         if (directoryResult?.error) {
+           showNotification('自动备份失败', directoryResult.error);
+         }
+         return;
+       }
 
-      if (!savedSnapshot && !directoryResult?.success) {
-        if (directoryResult?.error) {
-          showNotification('自动备份失败', directoryResult.error);
-        }
-        return;
-      }
+       const interval = getBackupInterval(settings.backupFrequency);
+       const now = new Date();
 
-      const interval = getBackupInterval(settings.backupFrequency);
-      const now = new Date();
-
-      await chrome.storage.local.set({
-        lastBackupTime: now.toISOString(),
-        nextBackupTime: new Date(now.getTime() + interval).toISOString()
-      });
+       await chrome.storage.local.set({
+         lastBackupTime: now.toISOString(),
+         nextBackupTime: new Date(now.getTime() + interval).toISOString()
+       });
 
       const messages = [];
       if (savedSnapshot) {

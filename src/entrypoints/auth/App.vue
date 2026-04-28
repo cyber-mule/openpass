@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,12 +13,51 @@ const password = ref('');
 const showPassword = ref(false);
 const error = ref('');
 const submitting = ref(false);
+const now = ref(Date.now());
 
 const remainingAttempts = computed(() => authStore.getRemainingAttempts());
 const isLocked = computed(() => authStore.isLocked());
 
+const remainingLockTime = computed(() => {
+  if (!isLocked.value || !authStore.authLockedUntil) return 0;
+  return Math.max(0, authStore.authLockedUntil - now.value);
+});
+
+const remainingMinutes = computed(() => {
+  return Math.floor(remainingLockTime.value / 60000);
+});
+
+const remainingSeconds = computed(() => {
+  return Math.floor((remainingLockTime.value % 60000) / 1000);
+});
+
+let timer: number | null = null;
+
+function startTimer() {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+  if (isLocked.value) {
+    timer = window.setInterval(() => {
+      now.value = Date.now();
+    }, 1000);
+  }
+}
+
+watch(isLocked, () => {
+  startTimer();
+});
+
 onMounted(async () => {
   await authStore.init();
+  startTimer();
+});
+
+onUnmounted(() => {
+  if (timer) {
+    clearInterval(timer);
+  }
 });
 
 async function handleSubmit() {
@@ -102,21 +141,28 @@ async function handleSubmit() {
             </div>
           </div>
 
-          <p v-if="error" class="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
-            {{ error }}
-          </p>
+           <p v-if="error" class="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+             {{ error }}
+           </p>
 
-          <Button
-            type="submit"
-            class="w-full"
-            :disabled="submitting || isLocked"
-          >
-            {{ submitting ? '验证中...' : (isLocked ? '已锁定' : '解锁') }}
-          </Button>
+           <div v-if="isLocked" class="text-sm text-center text-destructive bg-destructive/10 px-3 py-3 rounded-md space-y-1">
+             <p>尝试次数过多，已临时锁定</p>
+             <p class="font-medium">
+               剩余等待时间：{{ remainingMinutes }}分 {{ remainingSeconds }}秒
+             </p>
+           </div>
 
-          <p v-if="!isLocked && remainingAttempts < 5" class="text-sm text-center text-muted-foreground">
-            剩余尝试次数：<span class="font-medium text-destructive">{{ remainingAttempts }}</span>
-          </p>
+           <Button
+             type="submit"
+             class="w-full"
+             :disabled="submitting || isLocked"
+           >
+             {{ submitting ? '验证中...' : (isLocked ? '已锁定' : '解锁') }}
+           </Button>
+
+           <p v-if="!isLocked && remainingAttempts < 5" class="text-sm text-center text-muted-foreground">
+             剩余尝试次数：<span class="font-medium text-destructive">{{ remainingAttempts }}</span>
+           </p>
         </form>
       </CardContent>
     </Card>
