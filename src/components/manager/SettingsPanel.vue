@@ -18,7 +18,7 @@ const autoBackup = useAutoBackup();
 const isInitialized = ref(false);
 
 const enableAutoBackup = ref(false);
-const backupFrequency = ref<'daily' | 'weekly' | 'monthly'>('weekly');
+const backupFrequency = ref<'every5min' | 'daily' | 'weekly' | 'monthly'>('weekly');
 const enableLocalSnapshot = ref(true);
 const enableDirectoryBackup = ref(false);
 const lastBackupTime = ref<string | null>(null);
@@ -128,6 +128,10 @@ async function saveEncryptionSettings() {
     useMasterPasswordForBackup: useMasterPasswordForBackup.value
   });
 
+  if (!enableBackupEncryption.value || useMasterPasswordForBackup.value) {
+    await chrome.storage.local.remove(['encryptedSecretsForBackup']);
+  }
+
   if (enableBackupEncryption.value) {
     showToast(
       useMasterPasswordForBackup.value
@@ -168,11 +172,20 @@ async function saveBackupPassword() {
       authStore.sessionKey
     );
 
-    await chrome.storage.local.set({
+    const storageData: Record<string, string> = {
       backupPasswordHash: hash,
       backupPasswordSalt: salt,
       encryptedBackupPassword
-    });
+    };
+
+    if (secretStore.secrets.length > 0) {
+      storageData.encryptedSecretsForBackup = await CryptoUtils.encrypt(
+        JSON.stringify(secretStore.secrets),
+        backupPassword.value
+      );
+    }
+
+    await chrome.storage.local.set(storageData);
 
     backupPasswordError.value = '';
     backupPassword.value = '';
@@ -236,28 +249,38 @@ async function handleBackupNow() {
 
     const messages = [];
     if (results.snapshot) messages.push('本地快照已保存');
-    if (results.directory?.success) {
-      messages.push(`文件已保存到 ${results.directory.locationLabel ?? results.directory.filename}`);
-    }
-
-    if (messages.length > 0) {
-      showToast(messages.join('，'), 'success');
-      return;
-    }
-
-    if (results.directory && !results.directory.success) {
-      if (results.directory.needAuth) {
-        directoryInfo.value = await autoBackup.getDirectoryInfo();
-      }
-      showToast(results.directory.error || '备份失败', 'error');
-      return;
-    }
-
-    showToast('未启用任何备份目标', 'warning');
-  } catch (error) {
-    showToast(`备份失败: ${getErrorMessage(error)}`, 'error');
+    if (results.directory?.success) messages.push('目录备份成功');
+    if (messages.length > 0) showToast(messages.join('，'), 'success');
   } finally {
     backingUp.value = false;
+  }
+}
+
+async function testAutoBackup() {
+  const settings = await chrome.storage.local.get([
+    'enableBackupEncryption',
+    'useMasterPasswordForBackup',
+    'encryptedBackupPassword',
+    'encryptedSecrets',
+    'encryptedSecretsForBackup',
+    'secrets'
+  ]);
+
+  console.log('[测试] 备份加密设置检查:', {
+    enableBackupEncryption: settings.enableBackupEncryption,
+    useMasterPasswordForBackup: settings.useMasterPasswordForBackup,
+    hasEncryptedBackupPassword: typeof settings.encryptedBackupPassword === 'string',
+    hasEncryptedSecrets: typeof settings.encryptedSecrets === 'string',
+    hasEncryptedSecretsForBackup: typeof settings.encryptedSecretsForBackup === 'string',
+    secretsCount: Array.isArray(settings.secrets) ? settings.secrets.length : 0
+  });
+
+  // 触发 background 中的自动备份检查
+  try {
+    await chrome.runtime.sendMessage({ action: 'testAutoBackup' });
+    showToast('已触发自动备份测试，请查看控制台', 'info');
+  } catch (error) {
+    showToast('触发失败: ' + (error as Error).message, 'error');
   }
 }
 
@@ -472,6 +495,7 @@ async function resetAllData() {
           <div class="form-group">
             <label>备份频率</label>
             <select v-model="backupFrequency" class="form-select" @change="saveBackupSettings">
+              <option value="every5min">每 5 分钟 (测试)</option>
               <option value="daily">每天</option>
               <option value="weekly">每周</option>
               <option value="monthly">每月</option>
@@ -561,14 +585,23 @@ async function resetAllData() {
           </div>
 
           <!-- 立即备份 -->
-          <button class="btn-secondary" :disabled="backingUp" @click="handleBackupNow">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="17 8 12 3 7 8"></polyline>
-              <line x1="12" y1="3" x2="12" y2="15"></line>
-            </svg>
-            {{ backingUp ? '备份中...' : '立即备份' }}
-          </button>
+          <div class="button-group">
+            <button class="btn-secondary" :disabled="backingUp" @click="handleBackupNow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              {{ backingUp ? '备份中...' : '立即备份' }}
+            </button>
+            <button class="btn-secondary" @click="testAutoBackup">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20V10M12 10L6 16M12 10L18 16"></path>
+                <path d="M22 12C22 17.5228 17.5228 22 12 22M2 12C2 6.47715 6.47715 2 12 2"></path>
+              </svg>
+              测试自动备份
+            </button>
+          </div>
         </div>
       </div>
 
@@ -898,6 +931,16 @@ async function resetAllData() {
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.button-group {
+  display: flex;
+  gap: 12px;
+}
+
+.button-group .btn-secondary {
+  flex: 1;
+  justify-content: center;
 }
 
 .btn-secondary {

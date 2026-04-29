@@ -15,7 +15,7 @@ import {
 } from '@/utils/backupDestination';
 import { installGlobalRuntimeErrorListeners } from '@/utils/runtimeErrors';
 
-type BackupFrequency = 'daily' | 'weekly' | 'monthly';
+type BackupFrequency = 'every5min' | 'daily' | 'weekly' | 'monthly';
 
 interface StoredSecret {
   secret: string;
@@ -36,6 +36,7 @@ const BACKUP_HANDLE_STORE = 'handles';
 const AUTO_BACKUP_ALARM_NAME = 'openpass-auto-backup';
 
 const BACKUP_INTERVALS: Record<BackupFrequency, number> = {
+  every5min: 5 * 60 * 1000,
   daily: 24 * 60 * 60 * 1000,
   weekly: 7 * 24 * 60 * 60 * 1000,
   monthly: 30 * 24 * 60 * 60 * 1000
@@ -316,6 +317,16 @@ export default defineBackground(() => {
       return true;
     }
 
+    // 测试自动备份
+    if (request.action === 'testAutoBackup') {
+      (async () => {
+        console.log('[AutoBackup] 手动触发自动备份测试');
+        await handleAutoBackup();
+        sendResponse({ success: true });
+      })();
+      return true;
+    }
+
     if (request.action === 'checkSetup') {
       (async () => {
         const setupComplete = await checkSetupComplete();
@@ -509,10 +520,30 @@ export default defineBackground(() => {
     };
   }
 
+  function createCustomPasswordEncryptedBackup(
+    encryptedSecretsForBackup: string,
+    count: number
+  ): BackupData<StoredSecret> {
+    return {
+      format: 'openpass-backup',
+      formatVersion: 1,
+      appVersion: chrome.runtime.getManifest().version || '0.0.0',
+      exportTime: new Date().toISOString(),
+      exportPlatform: typeof navigator !== 'undefined' ? navigator.platform : undefined,
+      count,
+      encrypted: true,
+      encryptedData: encryptedSecretsForBackup,
+      encryptionVersion: 1,
+      kdf: 'PBKDF2',
+      kdfIterations: 100000
+    };
+  }
+
    function getStoredSecretCount(settings: {
      secrets?: StoredSecret[];
      sitesList?: SiteListItem[];
      encryptedSecrets?: string;
+     encryptedSecretsForBackup?: string;
    }) {
      if (Array.isArray(settings.secrets)) {
        return settings.secrets.length;
@@ -522,8 +553,8 @@ export default defineBackground(() => {
        return settings.sitesList.length;
      }
 
-     // 如果有 encryptedSecrets 说明至少有一个加密密钥，至少返回 1 而不是 0
-     return typeof settings.encryptedSecrets === 'string' ? 1 : 0;
+     // 如果有 encryptedSecrets 或 encryptedSecretsForBackup 说明至少有一个加密密钥
+     return typeof settings.encryptedSecrets === 'string' || typeof settings.encryptedSecretsForBackup === 'string' ? 1 : 0;
    }
 
   async function handleAutoBackup() {
@@ -537,6 +568,7 @@ export default defineBackground(() => {
         enableLocalSnapshot?: boolean;
         enableDirectoryBackup?: boolean;
         encryptedSecrets?: string;
+        encryptedSecretsForBackup?: string;
         secrets?: StoredSecret[];
         sitesList?: SiteListItem[];
       }>([
@@ -545,6 +577,7 @@ export default defineBackground(() => {
         'enableLocalSnapshot',
         'enableDirectoryBackup',
         'encryptedSecrets',
+        'encryptedSecretsForBackup',
         'secrets',
         'sitesList'
       ]);
@@ -556,16 +589,38 @@ export default defineBackground(() => {
        let backupCount = 0;
        let backupData: BackupData<StoredSecret>;
 
-        // 如果启用了备份加密且使用主密码且已有加密密钥，直接走快速路径
-        // 复用已加密的数据，不需要sessionKey，即使会话过期也能备份
-        if (
-          encryptionSettings.enableBackupEncryption &&
+        const isMasterPasswordFastPath =
           encryptionSettings.useMasterPasswordForBackup &&
-          typeof settings.encryptedSecrets === 'string'
-        ) {
+          typeof settings.encryptedSecrets === 'string';
+        const isCustomPasswordFastPath =
+          encryptionSettings.enableBackupEncryption &&
+          !encryptionSettings.useMasterPasswordForBackup &&
+          typeof settings.encryptedSecretsForBackup === 'string';
+
+        console.log('[AutoBackup] ========== 自动备份检查 ==========');
+        console.log('[AutoBackup] 自动备份已启用:', settings.enableAutoBackup);
+        console.log('[AutoBackup] 加密设置 - enableBackupEncryption:', encryptionSettings.enableBackupEncryption);
+        console.log('[AutoBackup] 加密设置 - useMasterPasswordForBackup:', encryptionSettings.useMasterPasswordForBackup);
+        console.log('[AutoBackup] encryptedSecrets 存在:', typeof settings.encryptedSecrets === 'string');
+        console.log('[AutoBackup] encryptedSecretsForBackup 存在:', typeof settings.encryptedSecretsForBackup === 'string');
+        console.log('[AutoBackup] sessionKey 存在:', !!sessionKey);
+        console.log('[AutoBackup] isMasterPasswordFastPath:', isMasterPasswordFastPath);
+        console.log('[AutoBackup] isCustomPasswordFastPath:', isCustomPasswordFastPath);
+        console.log('[AutoBackup] =========================================');
+
+        // 快速路径：复用已加密的数据，不需要sessionKey，即使会话过期也能备份
+        if (isMasterPasswordFastPath) {
+          console.log('[AutoBackup] 使用主密码快速路径');
           backupCount = getStoredSecretCount(settings);
           backupData = createMasterPasswordEncryptedBackup(
             settings.encryptedSecrets,
+            backupCount
+          );
+        } else if (isCustomPasswordFastPath) {
+          console.log('[AutoBackup] 使用自定义密码快速路径');
+          backupCount = getStoredSecretCount(settings);
+          backupData = createCustomPasswordEncryptedBackup(
+            settings.encryptedSecretsForBackup,
             backupCount
           );
         } else {
@@ -578,6 +633,7 @@ export default defineBackground(() => {
           );
 
           if (encryptionSettings.enableBackupEncryption && !backupPassword) {
+            console.warn('[AutoBackup] 缺少备份密码，跳过');
             showNotification('自动备份跳过', '请先解锁 OpenPass 或检查备份加密设置');
             return;
           }
@@ -601,10 +657,7 @@ export default defineBackground(() => {
        // 如果快速路径备份计数为0，仍然需要更新下一次备份时间
        const hasAnySuccess = savedSnapshot || (directoryResult?.success === true);
        const isFastPathWithZeroCount = 
-         encryptionSettings.enableBackupEncryption &&
-         encryptionSettings.useMasterPasswordForBackup &&
-         typeof settings.encryptedSecrets === 'string' &&
-         backupCount === 0;
+         (isMasterPasswordFastPath || isCustomPasswordFastPath) && backupCount === 0;
        
        if (!hasAnySuccess && !isFastPathWithZeroCount) {
          if (directoryResult?.error) {
@@ -621,13 +674,16 @@ export default defineBackground(() => {
          nextBackupTime: new Date(now.getTime() + interval).toISOString()
        });
 
-      const messages = [];
-      if (savedSnapshot) {
-        messages.push(`已备份 ${backupCount} 个密钥到本地快照`);
-      }
-      if (directoryResult?.success) {
-        messages.push(`已写入 ${directoryResult.locationLabel ?? directoryResult.filename}`);
-      }
+       const messages = [];
+       if (isMasterPasswordFastPath || isCustomPasswordFastPath) {
+         messages.push('[快速路径] 无需解锁');
+       }
+       if (savedSnapshot) {
+         messages.push(`已备份 ${backupCount} 个密钥到本地快照`);
+       }
+       if (directoryResult?.success) {
+         messages.push(`已写入 ${directoryResult.locationLabel ?? directoryResult.filename}`);
+       }
 
       if (messages.length > 0) {
         showNotification('自动备份完成', messages.join('；'));

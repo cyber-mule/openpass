@@ -34,6 +34,32 @@ function redirectToAuth() {
   window.location.href = getAuthRedirect();
 }
 
+function isExtensionContextValid() {
+  try {
+    return !!(chrome.runtime && chrome.runtime.id);
+  } catch {
+    return false;
+  }
+}
+
+async function handleLogout() {
+  if (!isExtensionContextValid()) {
+    redirectToAuth();
+    return;
+  }
+  
+  try {
+    cleanupActivityListener();
+    await authStore.clearSession();
+    
+    setTimeout(() => {
+      redirectToAuth();
+    }, 100);
+  } catch {
+    redirectToAuth();
+  }
+}
+
 async function ensureAuthenticated() {
   const authenticated = await authStore.checkSession();
   if (!authenticated) {
@@ -262,7 +288,7 @@ watch(
 
   <div v-else class="flex min-h-screen bg-gray-50">
     <!-- 侧边栏 -->
-    <Sidebar :current-page="currentPage" @navigate="currentPage = $event" />
+    <Sidebar :current-page="currentPage" @navigate="currentPage = $event" @logout="handleLogout" />
 
     <!-- 主内容 -->
     <main class="flex-1 p-8 overflow-y-auto">

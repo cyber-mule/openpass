@@ -4,6 +4,13 @@ import { getErrorMessage } from '@/utils/error';
 const RUNTIME_ERRORS_KEY = 'runtimeErrors';
 const MAX_RUNTIME_ERRORS = 20;
 
+const IGNORED_ERROR_PATTERNS = [
+  'Extension context invalidated.',
+  'context invalidated',
+  'The message port closed before a response was received.',
+  'message port closed'
+];
+
 export interface RuntimeErrorEntry {
   id: string;
   scope: string;
@@ -72,6 +79,13 @@ function shouldIgnoreUnhandledRejection(event: any, options: RuntimeErrorListene
   return true;
 }
 
+function shouldIgnoreByMessage(message: string) {
+  const lowerMessage = message.toLowerCase();
+  return IGNORED_ERROR_PATTERNS.some((pattern) =>
+    lowerMessage.includes(pattern.toLowerCase())
+  );
+}
+
 async function readRuntimeErrors(): Promise<RuntimeErrorEntry[]> {
   try {
     const result = await chrome.storage.local.get<{ runtimeErrors?: RuntimeErrorEntry[] }>([
@@ -86,7 +100,9 @@ async function readRuntimeErrors(): Promise<RuntimeErrorEntry[]> {
 function createReporter(scope: string) {
   return (error: unknown, details?: string) => {
     void recordRuntimeError({ scope, error, details }).catch((recordError) => {
-      console.error(`[${scope}] failed to record runtime error`, recordError);
+      if (!shouldIgnoreByMessage(getErrorMessage(recordError, ''))) {
+        console.error(`[${scope}] failed to record runtime error`, recordError);
+      }
     });
   };
 }
@@ -104,10 +120,16 @@ export async function recordRuntimeError(input: {
   error: unknown;
   details?: string;
 }) {
+  const message = getErrorMessage(input.error, '未知错误');
+  
+  if (shouldIgnoreByMessage(message)) {
+    return null;
+  }
+
   const entry: RuntimeErrorEntry = {
     id: createErrorId(),
     scope: input.scope,
-    message: getErrorMessage(input.error, '未知错误'),
+    message,
     details: input.details,
     stack: input.error instanceof Error ? input.error.stack : undefined,
     createdAt: new Date().toISOString()

@@ -16,7 +16,7 @@ import { getErrorMessage } from '@/utils/error';
 
 export interface BackupSettings {
   enableAutoBackup: boolean;
-  backupFrequency: 'daily' | 'weekly' | 'monthly';
+  backupFrequency: 'every5min' | 'daily' | 'weekly' | 'monthly';
   enableLocalSnapshot: boolean;
   enableDirectoryBackup: boolean;
   backupDirectory: string;
@@ -102,6 +102,8 @@ export function useAutoBackup() {
 
   function getBackupInterval(frequency: BackupSettings['backupFrequency']): number {
     switch (frequency) {
+      case 'every5min':
+        return 5 * 60 * 1000;
       case 'daily':
         return 24 * 60 * 60 * 1000;
       case 'weekly':

@@ -53,6 +53,12 @@ export const useSecretStore = defineStore('secrets', () => {
         secrets.value = [];
       }
 
+      // 如果没有 encryptedSecrets 但有 sessionKey，生成一个用于自动备份快速路径
+      if (authStore.sessionKey && typeof result.encryptedSecrets !== 'string' && secrets.value.length > 0) {
+        console.log('[SecretStore] 自动生成 encryptedSecrets 用于自动备份快速路径');
+        await saveSecrets();
+      }
+
       if (!Array.isArray(result.secrets) && secrets.value.length > 0) {
         console.warn('[SecretStore] storage 中 secrets 格式异常，正在修复...');
         await chrome.storage.local.set({
@@ -82,6 +88,7 @@ export const useSecretStore = defineStore('secrets', () => {
       secrets: Secret[];
       sitesList: Array<{ site: string }>;
       encryptedSecrets?: string;
+      encryptedSecretsForBackup?: string;
     } = {
       secrets: secrets.value,
       sitesList
@@ -92,6 +99,26 @@ export const useSecretStore = defineStore('secrets', () => {
         JSON.stringify(secrets.value),
         authStore.sessionKey
       );
+
+      const encryptionSettings = await getBackupEncryptionSettings();
+      if (
+        encryptionSettings.enableBackupEncryption &&
+        !encryptionSettings.useMasterPasswordForBackup &&
+        encryptionSettings.encryptedBackupPassword
+      ) {
+        try {
+          const backupPassword = await CryptoUtils.decrypt(
+            encryptionSettings.encryptedBackupPassword,
+            authStore.sessionKey
+          );
+          data.encryptedSecretsForBackup = await CryptoUtils.encrypt(
+            JSON.stringify(secrets.value),
+            backupPassword
+          );
+        } catch {
+          console.error('[SecretStore] 无法更新 encryptedSecretsForBackup');
+        }
+      }
     }
 
     await chrome.storage.local.set(data);

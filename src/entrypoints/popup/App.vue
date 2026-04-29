@@ -653,6 +653,39 @@ function openOptionsPage() {
   window.close();
 }
 
+// 检查扩展上下文是否有效
+function isExtensionContextValid() {
+  try {
+    return !!(chrome.runtime && chrome.runtime.id);
+  } catch {
+    return false;
+  }
+}
+
+// 退出登录
+async function handleLogout() {
+  showMenu.value = false;
+  
+  if (!isExtensionContextValid()) {
+    window.location.reload();
+    return;
+  }
+  
+  try {
+    clearAllTimers();
+    stopPreviewTimer();
+    await chrome.storage.session.remove(['sessionKey']);
+    await chrome.storage.local.remove(['sessionExpiresAt']);
+    
+    // 延迟刷新确保所有操作完成
+    setTimeout(() => {
+      window.location.reload();
+    }, 100);
+  } catch {
+    window.location.reload();
+  }
+}
+
 // 打开设置页面
 function openSetupPage() {
   chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
@@ -712,6 +745,15 @@ function openSetupPage() {
                   <line x1="9" y1="3" x2="9" y2="21" />
                 </svg>
                 <span>打开管理页面</span>
+              </button>
+              <div class="dropdown-divider" />
+              <button class="dropdown-item" style="color: var(--danger-color)" @click="handleLogout">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                <span>退出登录</span>
               </button>
             </div>
           </div>
