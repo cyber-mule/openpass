@@ -1,12 +1,21 @@
 {
   "name": "openpass",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "> 开源、本地、安全的两步验证管理器",
   "main": "auth.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "compile": "vue-tsc --noEmit",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "format": "prettier --write src/",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -21,6 +30,37 @@
   },
   "homepage": "https://github.com/cyber-mule/openpass#readme",
   "devDependencies": {
-    "puppeteer-core": "^24.40.0"
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.1.40",
+    "@vue/tsconfig": "^0.9.1",
+    "@wxt-dev/module-vue": "^1.0.3",
+    "autoprefixer": "^10.4.27",
+    "eslint": "^10.2.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.8.0",
+    "globals": "^17.5.0",
+    "postcss": "^8.5.9",
+    "prettier": "^3.8.1",
+    "puppeteer-core": "^24.40.0",
+    "tailwindcss": "^3.4.19",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1",
+    "unocss": "^66.6.8",
+    "vue": "^3.5.32",
+    "vue-tsc": "^3.2.6",
+    "wxt": "^0.20.20"
+  },
+  "dependencies": {
+    "@vueuse/core": "^14.2.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "jsqr": "^1.4.0",
+    "lucide-vue-next": "^1.0.0",
+    "otpauth": "^9.5.0",
+    "pinia": "^3.0.4",
+    "radix-vue": "^1.9.17",
+    "reka-ui": "^2.9.5",
+    "tailwind-merge": "^3.5.0"
   }
 }

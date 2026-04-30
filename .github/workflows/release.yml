@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -36,19 +36,22 @@ jobs:
           echo "Release tag: $TAG"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Get version info
         id: version
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
+          # 去掉 -rc/-alpha/-beta 后缀，manifest.json 不接受
           VERSION="${TAG#v}"
+          VERSION="${VERSION%%-*}"
           BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
           COMMIT_HASH="${{ github.sha }}"
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
           echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
 
@@ -57,122 +60,203 @@ jobs:
           echo "Build time: $BUILD_TIME"
           echo "Commit: $COMMIT_HASH"
 
-      - name: Update version and inject build signature
+      - name: Update version in wxt.config.ts and package.json
         run: |
           node -e "
             const fs = require('fs');
-            const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-            manifest.version = '${{ steps.version.outputs.version }}';
-            manifest.build_time = '${{ steps.version.outputs.build_time }}';
-            manifest.commit_hash = '${{ steps.version.outputs.commit_hash }}';
-            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2));
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            // Update wxt.config.ts version
+            const configPath = 'wxt.config.ts';
+            let config = fs.readFileSync(configPath, 'utf8');
+            config = config.replace(/version:\s*['\"][^'\"]+['\"]/, \"version: '${{ steps.version.outputs.version }}'\");
+            fs.writeFileSync(configPath, config);
+            console.log('Updated wxt.config.ts version to ${{ steps.version.outputs.version }}');
+
+            // Update package.json version
+            const pkgPath = 'package.json';
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
             pkg.version = '${{ steps.version.outputs.version }}';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+            console.log('Updated package.json version to ${{ steps.version.outputs.version }}');
           "
-          echo "Updated version to ${{ steps.version.outputs.version }}"
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build extension
+        run: npm run build
+
+      - name: Package extension
         run: |
-          mkdir -p build/openpass
-
-          # 核心文件
-          cp -r icons build/openpass/
-          cp manifest.json build/openpass/
-          cp background.js build/openpass/
-          cp totp.js build/openpass/
-          cp crypto.js build/openpass/
-          cp jsQR.min.js build/openpass/
-          cp backup-manager.js build/openpass/
-          cp auto-backup.js build/openpass/
-
-          # Popup 页面
-          cp popup.html build/openpass/
-          cp popup.css build/openpass/
-          cp popup.js build/openpass/
-
-          # Manager 页面
-          cp manager.html build/openpass/
-          cp manager.css build/openpass/
-          cp manager.js build/openpass/
-
-          # Setup 和 Auth 页面
-          cp setup.html build/openpass/
-          cp setup.css build/openpass/
-          cp setup.js build/openpass/
-          cp auth.html build/openpass/
-          cp auth.css build/openpass/
-          cp auth.js build/openpass/
-
-          # Content Script
-          cp content.js build/openpass/
-          cp content.css build/openpass/
-
-          # 打包为 zip
           TAG="${{ steps.tag.outputs.tag }}"
-          cd build
-          zip -r ../${TAG}.zip openpass
-          cd ..
+          npx wxt zip
+          # WXT 输出到 .output/chrome-mv3.zip 或类似路径
+          OUTPUT_ZIP=$(find .output -name '*.zip' -type f | head -1)
+          echo "Found output zip: $OUTPUT_ZIP"
+          if [ -n "$OUTPUT_ZIP" ]; then
+            cp "$OUTPUT_ZIP" "${TAG}.zip"
+            echo "Package created: ${TAG}.zip"
+          else
+            # Fallback: manually zip .output/chrome-mv3
+            if [ -d ".output/chrome-mv3" ]; then
+              cd .output/chrome-mv3
+              zip -r "../../${TAG}.zip" .
+              cd ../..
+            fi
+            echo "Package created (fallback): ${TAG}.zip"
+          fi
+          echo "=== Package verification ==="
+          ls -la *.zip 2>/dev/null || echo "No zip file found in workspace!"
+          file "${TAG}.zip" 2>/dev/null || echo "Zip file not found: ${TAG}.zip"
+          echo "==========================="
 
-          echo "Extension packaged successfully"
-          ls -la *.zip
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.tag.outputs.tag }}-zip
+          path: ${{ steps.tag.outputs.tag }}.zip
+          retention-days: 1
+
+      - name: Find previous tag
+        id: previoustag
+        run: |
+          git fetch --tags --force
+          PREV_TAG=$(git tag -l --sort=-creatordate | grep -v "^${{ steps.tag.outputs.tag }}$" | head -1)
+          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: ${PREV_TAG:-<none>}"
 
       - name: Build Changelog
         id: changelog
-        uses: mikepenz/release-changelog-builder-action@v5
-        with:
-          configuration: |
-            {
-              "categories": [
-                {
-                  "title": "## 🚀 新功能",
-                  "labels": ["feat", "feature"]
-                },
-                {
-                  "title": "## 🐛 Bug 修复",
-                  "labels": ["fix", "bugfix"]
-                },
-                {
-                  "title": "## 📝 文档",
-                  "labels": ["docs", "doc"]
-                },
-                {
-                  "title": "## 🔧 维护",
-                  "labels": ["chore", "refactor", "perf", "style", "test", "ci"]
-                }
-              ],
-              "label_extractor": [
-                {
-                  "pattern": "^(feat|feature):(.*)$",
-                  "target": "feat"
-                },
-                {
-                  "pattern": "^(fix|bugfix):(.*)$",
-                  "target": "fix"
-                },
-                {
-                  "pattern": "^(docs|doc):(.*)$",
-                  "target": "docs"
-                },
-                {
-                  "pattern": "^(chore|refactor|perf|style|test|ci):(.*)$",
-                  "target": "chore"
-                }
-              ],
-              "template": "#{{CHANGELOG}}\n\n**Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/#{{FROM_TAG}}...#{{TO_TAG}}",
-              "pr_template": "- #{{TITLE}} (#{{SHA}})",
-              "empty_template": "- No changes"
-            }
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          FROM_TAG="${{ steps.previoustag.outputs.tag }}"
+
+          if [ -n "$FROM_TAG" ]; then
+            RANGE="${FROM_TAG}..${TAG}"
+          else
+            RANGE="${TAG}"
+          fi
+
+          echo "=== Changelog range: $RANGE ==="
+          echo "=== All commits in range: ==="
+          git log --oneline $RANGE
+          echo "============================="
+
+          COMMITS=$(git log --pretty=format:"%s" $RANGE)
+          if [ -z "$COMMITS" ]; then
+            echo "No commits found in range, listing all as fallback:"
+            COMMITS=$(git log --pretty=format:"%s" -20)
+          fi
+
+          # 分类
+          FEATS=""
+          FIXES=""
+          DOCS=""
+          REFACTOR=""
+          CHORE=""
+          CI=""
+          OTHERS=""
+
+          while IFS= read -r line; do
+            case "$line" in
+              feat\(*\):*|feat:\ *)
+                msg="${line#*: }"
+                FEATS="${FEATS}- ${msg}\n"
+                ;;
+              fix\(*\):*|fix:\ *)
+                msg="${line#*: }"
+                FIXES="${FIXES}- ${msg}\n"
+                ;;
+              docs\(*\):*|docs:\ *)
+                msg="${line#*: }"
+                DOCS="${DOCS}- ${msg}\n"
+                ;;
+              refactor\(*\):*|refactor:\ *)
+                msg="${line#*: }"
+                REFACTOR="${REFACTOR}- ${msg}\n"
+                ;;
+              chore\(*\):*|chore:\ *)
+                msg="${line#*: }"
+                CHORE="${CHORE}- ${msg}\n"
+                ;;
+              ci\(*\):*|ci:\ *)
+                msg="${line#*: }"
+                CI="${CI}- ${msg}\n"
+                ;;
+              *)
+                OTHERS="${OTHERS}- ${line}\n"
+                ;;
+            esac
+          done <<< "$COMMITS"
+
+          CHANGELOG=""
+          if [ -n "$FEATS" ]; then
+            CHANGELOG="${CHANGELOG}## 🚀 新功能\n\n${FEATS}\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            CHANGELOG="${CHANGELOG}## 🐛 Bug 修复\n\n${FIXES}\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            CHANGELOG="${CHANGELOG}## 📝 文档\n\n${DOCS}\n"
+          fi
+          if [ -n "$REFACTOR" ]; then
+            CHANGELOG="${CHANGELOG}## ♻️ 重构\n\n${REFACTOR}\n"
+          fi
+          if [ -n "$CI" ]; then
+            CHANGELOG="${CHANGELOG}## 🔧 CI/CD\n\n${CI}\n"
+          fi
+          if [ -n "$CHORE" ]; then
+            CHANGELOG="${CHANGELOG}## 🔧 维护\n\n${CHORE}\n"
+          fi
+          if [ -n "$OTHERS" ]; then
+            CHANGELOG="${CHANGELOG}## 其他变更\n\n${OTHERS}\n"
+          fi
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="无变更记录"
+          fi
+
+          if [ -n "$FROM_TAG" ]; then
+            CHANGELOG="${CHANGELOG}\n**完整变更**: https://github.com/${{ github.repository }}/compare/${FROM_TAG}...${TAG}"
+          fi
+
+          echo "=== Generated Changelog ==="
+          echo -e "$CHANGELOG"
+          echo "==========================="
+
+          # Write changelog to file
+          echo -e "$CHANGELOG" > "${{ runner.temp }}/CHANGELOG.md"
+
+          # Use GITHUB_OUTPUT with delimiter
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo -e "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify release file
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "Checking for: ${TAG}.zip"
+          if [ -f "${TAG}.zip" ]; then
+            echo "✅ Release file exists: $(ls -lh ${TAG}.zip)"
+          else
+            echo "❌ Release file NOT found!"
+            # Try to find it
+            find . -name "*.zip" -type f 2>/dev/null
+            exit 1
+          fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          body: ${{ steps.changelog.outputs.changelog }}
-          files: ${{ steps.tag.outputs.tag }}.zip
+          body_path: ${{ runner.temp }}/CHANGELOG.md
+          files: |
+            ${{ steps.tag.outputs.tag }}.zip
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-rc') || contains(steps.tag.outputs.tag, '-alpha') || contains(steps.tag.outputs.tag, '-beta') || contains(steps.tag.outputs.tag, '-dev') }}
+          draft: false
+          allowUpdates: true
+          updateOnlyUnreleased: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
