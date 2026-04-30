@@ -15,3 +15,6 @@ totp.js
 QWEN.md
 CLAUDE.md
 AGENTS.md
+
+# 本地扩展密钥（用于固定开发时的扩展 ID）
+extension.key
